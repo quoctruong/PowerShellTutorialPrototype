@@ -12,38 +12,38 @@ A sample tutorial is included in the zip file (the name of the tutorial is Get-C
 Place the Get-CommandTutorial folder in C:\Program Files\WindowsPowerShell\Modules.
 
 Now open PowerShell and simply run Start-Tutorial <TutorialName> to use the tutorial.
-In the case of Get-CommandTutorial, the command would be Start-Tutorial Get-CommandTutorial.
+In the case of Get-CommandTutorial, the command would be `Start-Tutorial Get-CommandTutorial`.
 
-Anytime you want to stop the tutorial with the intent of resuming it later, simply run Stop-Tutorial.
+Anytime you want to stop the tutorial with the intent of resuming it later, simply run `Stop-Tutorial`.
 
 # Resume a Tutorial
 
-To resume a tutorial, run Restore-Tutorial <TutorialName>.
-For example, Restore-Tutorial Get-CommandTutorial
+To resume a tutorial, run `Restore-Tutorial <TutorialName>`.
+For example, `Restore-Tutorial Get-CommandTutorial`
 
 # Show tutorials on your machine
 
-To show the available tutorials, run Get-Tutorial
+To show the available tutorials, run `Get-Tutorial`
 
 # Create a new tutorial
 
-To create a new tutorial, run New-Tutorial <TutorialName>
+To create a new tutorial, run `New-Tutorial <TutorialName>`
 This will create a new tutorial. After that, it will open up a data file that contains the Tutorial information in ISE.
 
 The data file contains an array of hashtable where it hashtable corresponds to a step in the tutorial.
 There are 4 possible keys in the hashtable:
 
-Instruction: The instruction of this step
+1. Instruction: The instruction of this step
 
-Answers: An array of acceptable response
+2. Answers: An array of acceptable response
 
-Hints: A hashtable. The key can be either number or string.
-If the key is a number, then the corresponding value will be displayed if the user fails to provide
+3. Hints: A hashtable. The key can be either number or string:
+  1. If the key is a number, then the corresponding value will be displayed if the user fails to provide
 the correct answer within that number of attempt.
-If the key is a string, then the corresponding value will be displayed if the user enters that string.
+  2. If the key is a string, then the corresponding value will be displayed if the user enters that string.
 
-Output: The output provided by the tutorial when the user enters the correct answer.
+4. Output: The output provided by the tutorial when the user enters the correct answer.
 
 You can directly edit the data file to create as many steps as you want to.
 
-You can also run New-Tutorial <TutorialName> -Interactive to create the data on the terminal.
+You can also run `New-Tutorial <TutorialName> -Interactive` to create the data on the terminal.
