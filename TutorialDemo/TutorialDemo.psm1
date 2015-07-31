@@ -53,12 +53,12 @@ function Get-Response ([string]$response)
     return $result.Trim()
 }
 
-function Write-Answer ([string]$answer)
+function Write-Answer ([string]$output)
 {
-    if ($answer -ne $null) {
-        Write-Host -ForegroundColor Green "Correct!`n"
+    if ($output -ne $null) {
+        Write-Host "$output`n"
 
-        Write-Host "$answer`n"
+        Write-Host -ForegroundColor Green "Correct!`n"
     }
 
 }
@@ -437,6 +437,10 @@ function Start-Tutorial
             [void]$tutorialNode.SetAttribute("Block", $Block)
             [void]$xml.SelectSingleNode("//LocalTutorialData").AppendChild($tutorialNode)
             [void]$xml.Save($xmlPath)
+
+            [initialsessionstate]$iss = [initialsessionstate]::CreateRestricted([System.Management.Automation.SessionCapabilities]::RemoteServer)
+            $iss.LanguageMode = [System.Management.Automation.PSLanguageMode]::ConstrainedLanguage
+            [powershell]$ps = [powershell]::Create($iss)
         }
     }
     Process
@@ -502,27 +506,86 @@ function Start-Tutorial
                         $tutorialNode = Update-TutorialNode $Name $i
                         return
                     }
-                }                
-
-                if ($response -inotin $acceptableResponses) {
-                    Write-Host -ForegroundColor Red "$response is not correct`n"            
-
-                    if ($hints -ne $null -and $hints.ContainsKey($response)) {
-                        $almostCorrect = $hints[$response]
-                        continue
+                } 
+                
+                [string]$expectedOutput = $blocks[$i]["output"]    
+                
+                # we match output result if no answers are supplied
+                if ($null -eq $acceptableResponses) {
+                    if ($null -ne $expectedOutput) {
+                        Write-Answer $expectedOutput
                     }
+                    break
                 }
-                else {
-                    Write-Answer $blocks[$i]["output"]
-                    break;
+
+                $global:ps = $ps;
+
+                [void]$ps.AddScript($response)
+                $result = $ps.Invoke() | Out-String
+
+                $ps.Commands.Clear()
+
+                # if * then we match the output, don't care about answer
+                if ("*" -iin $acceptableResponses) {
+                    # if output is null, then nothing to do
+                    if ($null -eq $expectedOutput) {
+                        # don't report error here
+                        $ps.Streams.Error.Clear()
+                        break
+                    }
+                    
+                    # output is not null, we match
+                    if (($expectedOutput -replace '\s+',' ').Trim() -match ($result -replace '\s+',' ').Trim()) {
+                        Write-PSError $ps
+                        Write-Answer $expectedOutput
+                        break
+                    }
+                    
+                    # incorrect answer case
+                }
+                elseif ($response -iin $acceptableResponses) {
+                    # acceptable response
+                    if ($null -ne $expectedOutput) {
+                        # Mocking so clear possible error
+                        $ps.Streams.Error.Clear()
+                        Write-Answer $expectedOutput
+                    }
+                    else {
+                        Write-PSError $ps
+                        Write-Answer $result
+                    }
+
+                    break
+                }
+
+                Write-PSError $ps
+
+                # write the result user got from terminal
+                Write-Host $result
+
+                # incorrect answer
+                Write-Host -ForegroundColor Red "$response is not correct`n"            
+
+                if ($hints -ne $null -and $hints.ContainsKey($response)) {
+                    $almostCorrect = $hints[$response]
+                    continue
                 }
 
                 $attempts += 1
             }
-   
         }
     }
     End
     {
+    }
+}
+
+function Write-PSError([powershell]$ps) {
+    if ($ps.HadErrors) {
+        foreach($error in $ps.Streams.Error) {
+            Write-Error $error 
+        }
+
+        $ps.Streams.Error.Clear()
     }
 }
