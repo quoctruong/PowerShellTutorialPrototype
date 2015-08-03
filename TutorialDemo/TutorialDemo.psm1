@@ -92,6 +92,240 @@ function Get-TutorialPromptOrAnswer([string[]]$prompt)
     return $instruction
 }
 
+
+function CreateTutorialInModule([string]$modulePath, [System.Management.Automation.PSCmdlet]$callerPScmdlet) {
+    $tutorialData = $script:simpleTutorialData
+
+    if ($Interactive) {
+        $newline = [System.Environment]::NewLine
+
+        $fileOutput = "@($newline"
+
+        while ($true) {              
+            $indentation = "`t`t"
+            Write-Host -ForegroundColor Cyan "$($newline)Write your instruction here. Input a new line to move on to answers"
+            $instruction = Get-TutorialPromptOrAnswer "Instruction> "        
+
+            if ($instruction.IndexOf("`n") -gt 0) {
+                $instruction = "@`"$newline$($instruction.Trim())$newline`"@"
+            } else {
+                $instruction = "`"$instruction`""
+            }
+
+            Write-Host -ForegroundColor Cyan "$($newline)Write your acceptable answers here. Input a new line to move on to hints"
+
+            $answers = Get-TutorialPromptOrAnswer "Answers> "
+    
+            $answers = $answers.Split("`n")
+
+            $answersOutput = "@($newline"
+            foreach ($answer in $answers) {
+                $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
+            }
+            $answersOutput += "$indentation)$newline"
+
+            Write-Host -ForegroundColor Cyan "$($newline)There are two parts of a hint: trigger and the hint itself.$newline"`
+            "The trigger can be a number, which will correspond to the number of times a user will have to enter the response incorrectly for the hint to appear.$newline"`
+            "The trigger can also be a string, which will correspond to the incorrect input that a user will have to enter for the hint to disappear.$newline"`
+            "The hint itself correspond to the output.$newline"`
+            "Input a new line to move on to output"
+
+            $hints = Get-TutorialPromptOrAnswer "Trigger> ", "Hint> "
+    
+            $hints = $hints.Split("`n")
+
+            $lengthOfHint = $hints.Length
+
+            if (($lengthOfHint % 2) -eq 1) {
+                $lengthOfHint = $lengthOfHint - 1
+            }
+
+            $hintsOutput = ""
+
+            if ($lengthOfHint -gt 0) {
+                $hintsOutput = "@{$newline"
+        
+                # now we have even number of the inputs
+
+                for ($i = 0; $i -lt $lengthOfHint/2; $i += 1) {
+                    $key = $hints[2*$i]
+                    $value = $hints[2*$i+1]
+                    if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+                        continue;
+                    }
+            
+                    [int]$keyNumber = $null
+                    if ([int32]::TryParse($key.Trim(), [ref]$keyNumber)) {
+                        $hintsOutput += "$indentation`t$keyNumber = `"$($value.Trim())`"$newline"
+                    }
+                    else {
+                        $hintsOutput += "$indentation`t`"$key`" = `"$($value.Trim())`"$newline"
+                    }
+
+                }
+
+                $hintsOutput += "$indentation}$newline"
+            }
+
+            Write-Host -ForegroundColor Cyan "$($newline)Write your output here. If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
+
+            $outputs = Get-TutorialPromptOrAnswer "Output> "
+
+            $outputs = $outputs.Split("`n")
+            $outputsOutput = ""
+
+            foreach ($output in $outputs) {
+                $output = $output.Trim()
+                if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
+                    $command = $output.Substring("Run-Command:".Length).Trim();
+                    try {
+                        $output = Invoke-Expression $command | Out-String
+                    }
+                    catch { }
+                }
+
+                $outputsOutput += $output
+
+                if ($outputs.Length -gt 1) {
+                    $outputsOutput += $newline
+                }
+            }
+
+            if ($outputsOutput.IndexOf("`n") -gt 0) {
+                $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
+            } else {
+                $outputsOutput = "`"$outputsOutput`""
+            }
+
+            $tutorialBlock = "`t,@{$newline"
+            $tutorialBlock += "$indentation`"instruction`" = $instruction"
+            $tutorialBlock += $newline
+
+            if (-not [string]::IsNullOrWhiteSpace($hintsOutput)) {
+                $tutorialBlock += "$indentation`"hints`" = $hintsOutput"
+                $tutorialBlock += $newline
+            }
+
+            $tutorialBlock += "$indentation`"answers`" = $answersOutput"
+            $tutorialBlock += $newline
+
+            $tutorialBlock += "$indentation`"output`" = $outputsOutput"
+            $tutorialBlock += $newline
+            $tutorialBlock += "`t}$newline"
+
+            $fileOutput += $tutorialBlock
+            Write-Host -ForegroundColor Cyan "Tutorial block created."
+    
+            if ($PSCmdlet.ShouldContinue("Create more tutorial block?", "Confirm creating more tutorial block")) {
+                continue;
+            }
+            else {
+                break;
+            }
+        }
+
+        $fileOutput += ")"
+        $tutorialData = $fileOutput
+
+    }
+
+    $locale = Join-Path $modulePath (Get-WinSystemLocale).Name
+
+    if (-not [System.IO.Directory]::Exists($locale)) {
+        mkdir $locale -ErrorAction Stop
+    }
+
+    [System.IO.File]::WriteAllText("$locale\$Name.TutorialData.psd1", $tutorialData)
+
+    ise "$locale\$Name.TutorialData.psd1"
+
+}
+
+# Utility to throw an errorrecord
+function ThrowError
+{
+    param
+    (        
+        [parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.Management.Automation.PSCmdlet]
+        $CallerPSCmdlet,
+
+        [parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.String]        
+        $ExceptionName,
+
+        [parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.String]
+        $ExceptionMessage,
+        
+        [System.Object]
+        $ExceptionObject,
+        
+        [parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [System.String]
+        $ErrorId,
+
+        [parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [System.Management.Automation.ErrorCategory]
+        $ErrorCategory
+    )
+        
+    $exception = New-Object $ExceptionName $ExceptionMessage;
+    $errorRecord = New-Object System.Management.Automation.ErrorRecord $exception, $ErrorId, $ErrorCategory, $ExceptionObject    
+    $CallerPSCmdlet.ThrowTerminatingError($errorRecord)
+}
+
+
+<#
+.Synopsis
+   Add a tutorial to an existing module
+.DESCRIPTION
+   Long description
+.EXAMPLE
+   Example of how to use this cmdlet
+.EXAMPLE
+   Another example of how to use this cmdlet
+#>
+function Add-Tutorial
+{
+    [CmdletBinding(SupportsShouldProcess)]
+    Param
+    (
+        # The name of the tutorial
+        [Parameter(Mandatory=$true,
+                   Position=0)]
+        [string]
+        $Name,
+        # if this is true then user will create the tutorial from the terminal
+        [switch]
+        $Interactive
+    )
+    Begin
+    {
+        try {
+            Import-Module $Name
+            $modulePath = Split-Path (Get-Module $Name).Path
+        }
+        catch {
+            $exception = New-Object "System.ArgumentException" "Module $Name cannot be found";
+            $errorRecord = New-Object System.Management.Automation.ErrorRecord $exception "System.ArgumentException", InvalidArgument, $directory    
+            $PSCmdlet.ThrowTerminatingError($errorRecord)
+        }
+    }
+    Process
+    {
+        CreateTutorialInModule $modulePath $PSCmdlet
+    }
+    End
+    {
+    }
+}
+
 <#
 .Synopsis
    Generate a tutorial
@@ -119,11 +353,17 @@ function New-Tutorial
 
     Begin
     {
-    }
-    Process
-    {
         $myDocuments = [System.Environment]::GetFolderPath("mydocuments");
         $moduleFolder = "$myDocuments\WindowsPowerShell\Modules"
+        if ([System.IO.Directory]::Exists("$moduleFolder\$Name")) {
+            ThrowError -ExceptionName "System.ArgumentException" `
+                        -ExceptionMessage "Directory $Name already exists" `
+                        -ErrorId "DirectoryExists" `
+                        -CallerPSCmdlet $PSCmdlet `
+                        -ErrorCategory InvalidArgument `
+                        -ExceptionObject "$moduleFolder\$Name"
+        }
+
         $directory = mkdir $moduleFolder\$Name
         $moduleManifestCommand = Get-Command New-ModuleManifest
         if ($moduleManifestCommand.Parameters.ContainsKey("Tags")) {
@@ -132,146 +372,10 @@ function New-Tutorial
         else {
             New-ModuleManifest "$($directory.FullName)\$Name.psd1" 
         }
-
-        $tutorialData = $script:simpleTutorialData
-
-        if ($Interactive) {
-            $newline = [System.Environment]::NewLine
-
-            $fileOutput = "@($newline"
-
-            while ($true) {              
-                $indentation = "`t`t"
-                Write-Host -ForegroundColor Cyan "$($newline)Write your instruction here. Input a new line to move on to answers"
-                $instruction = Get-TutorialPromptOrAnswer "Instruction> "        
-
-                if ($instruction.IndexOf("`n") -gt 0) {
-                    $instruction = "@`"$newline$($instruction.Trim())$newline`"@"
-                } else {
-                    $instruction = "`"$instruction`""
-                }
-
-                Write-Host -ForegroundColor Cyan "$($newline)Write your acceptable answers here. Input a new line to move on to hints"
-
-                $answers = Get-TutorialPromptOrAnswer "Answers> "
-    
-                $answers = $answers.Split("`n")
-
-                $answersOutput = "@($newline"
-                foreach ($answer in $answers) {
-                    $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
-                }
-                $answersOutput += "$indentation)$newline"
-
-                Write-Host -ForegroundColor Cyan "$($newline)There are two parts of a hint: trigger and the hint itself.$newline"`
-                "The trigger can be a number, which will correspond to the number of times a user will have to enter the response incorrectly for the hint to appear.$newline"`
-                "The trigger can also be a string, which will correspond to the incorrect input that a user will have to enter for the hint to disappear.$newline"`
-                "The hint itself correspond to the output.$newline"`
-                "Input a new line to move on to output"
-
-                $hints = Get-TutorialPromptOrAnswer "Trigger> ", "Hint> "
-    
-                $hints = $hints.Split("`n")
-
-                $lengthOfHint = $hints.Length
-
-                if (($lengthOfHint % 2) -eq 1) {
-                    $lengthOfHint = $lengthOfHint - 1
-                }
-
-                $hintsOutput = ""
-
-                if ($lengthOfHint -gt 0) {
-                    $hintsOutput = "@{$newline"
-        
-                    # now we have even number of the inputs
-
-                    for ($i = 0; $i -lt $lengthOfHint/2; $i += 1) {
-                        $key = $hints[2*$i]
-                        $value = $hints[2*$i+1]
-                        if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
-                            continue;
-                        }
-            
-                        [int]$keyNumber = $null
-                        if ([int32]::TryParse($key.Trim(), [ref]$keyNumber)) {
-                            $hintsOutput += "$indentation`t$keyNumber = `"$($value.Trim())`"$newline"
-                        }
-                        else {
-                            $hintsOutput += "$indentation`t`"$key`" = `"$($value.Trim())`"$newline"
-                        }
-
-                    }
-
-                    $hintsOutput += "$indentation}$newline"
-                }
-
-                Write-Host -ForegroundColor Cyan "$($newline)Write your output here. If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
-
-                $outputs = Get-TutorialPromptOrAnswer "Output> "
-
-                $outputs = $outputs.Split("`n")
-                $outputsOutput = ""
-
-                foreach ($output in $outputs) {
-                    $output = $output.Trim()
-                    if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
-                        $command = $output.Substring("Run-Command:".Length).Trim();
-                        try {
-                            $output = Invoke-Expression $command | Out-String
-                        }
-                        catch { }
-                    }
-
-                    $outputsOutput += $output
-
-                    if ($outputs.Length -gt 1) {
-                        $outputsOutput += $newline
-                    }
-                }
-
-                if ($outputsOutput.IndexOf("`n") -gt 0) {
-                    $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
-                } else {
-                    $outputsOutput = "`"$outputsOutput`""
-                }
-
-                $tutorialBlock = "`t,@{$newline"
-                $tutorialBlock += "$indentation`"instruction`" = $instruction"
-                $tutorialBlock += $newline
-
-                if (-not [string]::IsNullOrWhiteSpace($hintsOutput)) {
-                    $tutorialBlock += "$indentation`"hints`" = $hintsOutput"
-                    $tutorialBlock += $newline
-                }
-
-                $tutorialBlock += "$indentation`"answers`" = $answersOutput"
-                $tutorialBlock += $newline
-
-                $tutorialBlock += "$indentation`"output`" = $outputsOutput"
-                $tutorialBlock += $newline
-                $tutorialBlock += "`t}$newline"
-
-                $fileOutput += $tutorialBlock
-                Write-Host -ForegroundColor Cyan "Tutorial block created."
-    
-                if ($PSCmdlet.ShouldContinue("Create more tutorial block?", "Confirm creating more tutorial block")) {
-                    continue;
-                }
-                else {
-                    break;
-                }
-            }
-
-            $fileOutput += ")"
-            $tutorialData = $fileOutput
-            $global:fileOutput = $fileOutput
-
-        }
-
-        [System.IO.File]::WriteAllText("$($directory.FullName)\$Name.data.psd1", $tutorialData)
-
-        ise "$($directory.FullName)\$Name.data.psd1"
+    }
+    Process
+    {
+        CreateTutorialInModule $directory.FullName $PSCmdlet
     }
     End
     {
@@ -437,27 +541,26 @@ function Start-Tutorial
             [void]$tutorialNode.SetAttribute("Block", $Block)
             [void]$xml.SelectSingleNode("//LocalTutorialData").AppendChild($tutorialNode)
             [void]$xml.Save($xmlPath)
-
-            [initialsessionstate]$iss = [initialsessionstate]::CreateRestricted([System.Management.Automation.SessionCapabilities]::RemoteServer)
-            $iss.LanguageMode = [System.Management.Automation.PSLanguageMode]::ConstrainedLanguage
-            [powershell]$ps = [powershell]::Create($iss)
         }
-    }
-    Process
-    {
+
         try {
             Import-Module $Name
             $module = (Get-Module $Name)
-            $contents = Get-Content -Path (Join-Path (Split-Path $module.Path) "$Name.data.psd1") -Raw
-            $scriptblock = [scriptblock]::Create($contents)
-            [string[]] $allowedCommands = @()
-            $scriptblock.CheckRestrictedLanguage($allowedCommands, $null, $true)
-            $blocks = $scriptblock.InvokeReturnAsIs()
+            $blocks = Import-LocalizedData -BaseDirectory (Split-Path $module.Path) -FileName "$Name.TutorialData.psd1"
+
+            [initialsessionstate]$iss = [initialsessionstate]::CreateRestricted([System.Management.Automation.SessionCapabilities]::RemoteServer)
+            $iss.LanguageMode = [System.Management.Automation.PSLanguageMode]::ConstrainedLanguage
+            $iss.ImportPSModule($Name)
+            [powershell]$ps = [powershell]::Create($iss)
         }
         catch
         {
             throw
         }
+
+    }
+    Process
+    {
 
         Write-Host -ForegroundColor Cyan "Welcome to $Name tutorial`n"
         Write-Host -ForegroundColor Cyan "Type Stop-Tutorial anytime to quit the tutorial. Your progress will be saved`n"
@@ -470,6 +573,15 @@ function Start-Tutorial
             $instruction = $blocks[$i]["instruction"]
             [hashtable] $hints = $blocks[$i]["hints"]
             [string[]] $acceptableResponses = $blocks[$i]["answers"]
+
+            $resultFromAnswer = ""
+
+            if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
+                $ps.Commands.Clear()
+                [void]$ps.AddScript($acceptableResponses[0])
+                $resultFromAnswer = $ps.Invoke() | Out-String
+                $ps.Streams.Error.Clear()
+            }
         
             $response = ""
             $attempts = 0
@@ -482,11 +594,11 @@ function Start-Tutorial
                     $hint = $hints[$attempts]
                 }
     
-                if ($almostCorrect -ne "") {
+                if (-not [string]::IsNullOrWhiteSpace($almostCorrect)) {
                     Write-Host -ForegroundColor Green "Hints: $almostCorrect`n"
                     $almostCorrect = ""
                 }
-                elseif ($hint -ne "") {
+                elseif (-not [string]::IsNullOrWhiteSpace($hint)) {
                     Write-Host -ForegroundColor Green "Hints: $hint`n"
                 }
     
@@ -510,47 +622,36 @@ function Start-Tutorial
                 
                 [string]$expectedOutput = $blocks[$i]["output"]    
                 
-                # we match output result if no answers are supplied
-                if ($null -eq $acceptableResponses) {
-                    if ($null -ne $expectedOutput) {
-                        Write-Answer $expectedOutput
-                    }
-                    break
-                }
-
-                $global:ps = $ps;
-
+                $ps.Commands.Clear()
                 [void]$ps.AddScript($response)
                 $result = $ps.Invoke() | Out-String
 
-                $ps.Commands.Clear()
-
-                # if * then we match the output, don't care about answer
-                if ("*" -iin $acceptableResponses) {
+                # we match output result if no answers are supplied
+                if ($null -eq $acceptableResponses) {
                     # if output is null, then nothing to do
-                    if ($null -eq $expectedOutput) {
+                    if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
                         # don't report error here
                         $ps.Streams.Error.Clear()
                         break
                     }
                     
                     # output is not null, we match
-                    if (($expectedOutput -replace '\s+',' ').Trim() -match ($result -replace '\s+',' ').Trim()) {
+                    if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {
                         Write-PSError $ps
                         Write-Answer $expectedOutput
                         break
                     }
-                    
-                    # incorrect answer case
                 }
-                elseif ($response -iin $acceptableResponses) {
+
+                #here the acceptable response is not null
+                if ($response -iin $acceptableResponses) {
                     # acceptable response
-                    if ($null -ne $expectedOutput) {
+                    if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
                         # Mocking so clear possible error
                         $ps.Streams.Error.Clear()
                         Write-Answer $expectedOutput
                     }
-                    else {
+                    else {                        
                         Write-PSError $ps
                         Write-Answer $result
                     }
@@ -558,10 +659,21 @@ function Start-Tutorial
                     break
                 }
 
+                # here, response is not in acceptableResponses
                 Write-PSError $ps
 
-                # write the result user got from terminal
-                Write-Host $result
+                # we try to match user response with the result from one of the acceptable response
+                if (-not [string]::IsNullOrWhiteSpace($result)) {
+                    if (($result -replace '\s+',' ').Trim() -ieq ($resultFromAnswer -replace '\s+',' ').Trim()) {
+                        $global:result = $result
+                        $global:resultFromAnswer = $resultFromAnswer
+                        Write-Answer $expectedOutput
+                        break
+                    }
+
+                    # write the result user got from terminal
+                    Write-Host $result
+                }
 
                 # incorrect answer
                 Write-Host -ForegroundColor Red "$response is not correct`n"            
@@ -582,10 +694,10 @@ function Start-Tutorial
 
 function Write-PSError([powershell]$ps) {
     if ($ps.HadErrors) {
-        foreach($error in $ps.Streams.Error) {
-            Write-Error $error 
+        foreach ($error in $ps.Streams.Error) {
+            Write-Error $error
         }
-
+        
         $ps.Streams.Error.Clear()
     }
 }
