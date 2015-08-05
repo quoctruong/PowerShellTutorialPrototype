@@ -20,6 +20,8 @@ $script:simpleTutorialData = @"
             1 = "first hint"
             2 = "second hint"
         }
+        # this will be mocked out if it is provided.
+        # otherwise, the output will be from running the first answers command
         "output"="This is what will be printed for the user"
     },
     @{
@@ -167,7 +169,7 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
                 $hintsOutput += "$indentation}$newline"
             }
 
-            Write-Host -ForegroundColor Cyan "$($newline)Write your output here. If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
+            Write-Host -ForegroundColor Cyan "$($newline)Write your output here, otherwise it will be the output of the first acceptable response$($newline). If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
 
             $outputs = Get-TutorialPromptOrAnswer "Output> "
 
