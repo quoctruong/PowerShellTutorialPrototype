@@ -23,11 +23,7 @@ Cmdlet          Get-ChildItem                                      3.1.0.0    Mi
             1 = "Use Get-Command with Get-Help as the parameter"
             "Get-Command help" = "Close but help is not the same as get-help"
         }
-        "output"=@"
-CommandType     Name                                               Version    Source
------------     ----                                               -------    ------
-Cmdlet          Get-ChildItem                                      3.1.0.0    Microsoft.PowerShell.Management
-"@
+	# no output here so the tutorial will run what we have from the answer
     },
     @{
         "instruction" = "Now let's try to get-command with wild card. Find commands starting with stop";
