@@ -667,9 +667,7 @@ function Start-Tutorial
                 # we try to match user response with the result from one of the acceptable response
                 if (-not [string]::IsNullOrWhiteSpace($result)) {
                     if (($result -replace '\s+',' ').Trim() -ieq ($resultFromAnswer -replace '\s+',' ').Trim()) {
-                        $global:result = $result
-                        $global:resultFromAnswer = $resultFromAnswer
-                        Write-Answer $expectedOutput
+                        Write-Answer $resultFromAnswer
                         break
                     }
 
