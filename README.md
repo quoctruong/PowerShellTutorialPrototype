@@ -28,8 +28,10 @@ To show the available tutorials, run `Get-Tutorial`
 # Create a new tutorial
 
 To create a new tutorial, run `New-Tutorial <TutorialName>`
+
 To add a tutorial to an existing module, run `Add-Tutorial <ModuleName>`
-This will create a new tutorial. After that, it will open up a data file that contains the Tutorial information in ISE.
+
+After that, a data file that contains the Tutorial information will be opened in the ISE.
 
 The data file contains an array of hashtable where it hashtable corresponds to a step in the tutorial.
 There are 4 possible keys in the hashtable:
