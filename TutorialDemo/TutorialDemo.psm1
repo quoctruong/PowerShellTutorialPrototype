@@ -5,36 +5,42 @@ $script:xmlTutorial = @"
 "@
 
 $script:simpleTutorialData = @"
-@(
-    @{
+@{{
+    "TutorialCommands" = @(
+        # Provide commands that the user can use in the tutorial session here
+{0}
+    )
+    "TutorialData" = @(
+    @{{
         "instruction" = "provide your instruction here"
         "answers" = @(
             "Get-CorrectAnswer1"
             "Get-CorrectAnswer2"
         );
-        "hints" = @{
+        "hints" = @{{
             # The key can be numbers or string.
             # If it is a number, the hint will be printed out after that many attempts.
             # If it is a string, the hint will be printed out if the users put in 
             # that string as their answers.
             1 = "first hint"
             2 = "second hint"
-        }
+        }}
         # this will be mocked out if it is provided.
         # otherwise, the output will be from running the first answers command
         "output"="This is what will be printed for the user"
-    },
-    @{
+    }},
+    @{{
         "instruction" = "second step in tutorial";
         "answers" = @(
             "Get-AnotherCorrectAnswer"
         );
-        "hints" = @{
+        "hints" = @{{
             "Get-AnotherAnswer" = "Almost correct. Check your noun"
-        }
+        }}
         "output"="This is what I want the user to see"
-    }
-)
+    }}
+    )
+}}
 "@
 
 $script:resumeTutorial = $false
@@ -58,7 +64,7 @@ function Get-Response ([string]$response)
 function Write-Answer ([string]$output)
 {
     if ($output -ne $null) {
-        Write-Host "$output`n"
+        Write-Host "$output"
     }
 
     Write-Host -ForegroundColor Green "Correct!`n"
@@ -94,14 +100,80 @@ function Get-TutorialPromptOrAnswer([string[]]$prompt)
     return $instruction
 }
 
+function Stop-Tutorial {
+    $tutorialNode = Update-TutorialNode $Name $i
+    CleanUpTutorial
+    return
+}
 
-function CreateTutorialInModule([string]$modulePath, [System.Management.Automation.PSCmdlet]$callerPScmdlet) {
-    $tutorialData = $script:simpleTutorialData
+function CleanUpTutorial {
+    # clean up the prompt
+    Set-Content Function:\prompt $Global:OldPrompt -ErrorAction SilentlyContinue
+
+    # make all commands visible again
+    if ($Global:AllCommandsBeforeTutorial -ne $null) {
+        $Global:AllCommandsBeforeTutorial | ForEach-Object {$_.Visibility = "Public"}
+    }
+
+    # Return the sessionstate to original setting
+    $ExecutionContext.SessionState.Applications.AddRange($Global:OldApplications)
+    $ExecutionContext.SessionState.Scripts.AddRange($Global:OldScripts)
+
+    # Remove the proxy functions
+    Remove-Item Function:\Out-Default -Force -ErrorAction SilentlyContinue
+    Remove-Item Function:\Format-List -Force -ErrorAction SilentlyContinue
+    Remove-Item Function:\Format-Table -Force -ErrorAction SilentlyContinue
+    Remove-Item Function:\Format-Wide -Force -ErrorAction SilentlyContinue
+    Remove-Item Function:\Format-Custom -Force -ErrorAction SilentlyContinue
+
+    # Remove variables
+    Remove-Variable $Global:OldPrompt -ErrorAction SilentlyContinue
+    Remove-Variable $Global:LastOutput -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialAttempts -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialAlmostCorrect -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialIndex -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialHint -ErrorAction SilentlyContinue
+    Remove-Variable $Global:ResultFromAnswer -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialBlocks -ErrorAction SilentlyContinue
+    Remove-Variable $Global:OutputErrorToPipeLine -ErrorAction SilentlyContinue
+    Remove-Variable $Global:Formatted -ErrorAction SilentlyContinue
+    Remove-Variable $Global:TutorialPrompt -ErrorAction SilentlyContinue
+    Remove-Variable $Global:OldApplications -ErrorAction SilentlyContinue
+    Remove-Variable $Global:OldScripts -ErrorAction SilentlyContinue
+}
+
+# Returns a string that represents the TutorialCommands key value section of the dictionary in tutorial data file
+function CreateTutorialCommandSection([string[]]$tutorialCommands) {
+    $output = ""
+    if ($null -ne $tutorialCommands -and $tutorialCommands.Count -gt 0) {
+        foreach ($cmd in $tutorialCommands) {
+            $output += "`t`t`"$cmd`"$newline"
+        }
+    }
+
+    return $output
+}
+
+# Create a tutorial in a module
+# ModulePath is the path to the module
+# TutorialCommands is an optional parameter which is list of allowed commands
+function CreateTutorialInModule([string]$modulePath, [System.Management.Automation.PSCmdlet]$callerPScmdlet, [string[]]$tutorialCommands) {
+    $tutorialData = $script:simpleTutorialData -f (CreateTutorialCommandSection $tutorialCommands)
 
     if ($Interactive) {
         $newline = [System.Environment]::NewLine
 
-        $fileOutput = "@($newline"
+        $fileOutput = "@{$newline"
+
+        if ($null -ne $tutorialCommands -and $tutorialCommands.Count -gt 0) {
+            $fileOutput += "`t`"TutorialCommands`" = @($newline"
+
+            $fileOutput += CreateTutorialCommandSection $tutorialCommands
+
+            $fileOutput += "`t)$newline"
+        }
+
+        $fileOutput += "`t`"TutorialData`" = @($newline"
 
         while ($true) {              
             $indentation = "`t`t"
@@ -117,14 +189,18 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
             Write-Host -ForegroundColor Cyan "$($newline)Write your acceptable answers here. Input a new line to move on to hints"
 
             $answers = Get-TutorialPromptOrAnswer "Answers> "
-    
-            $answers = $answers.Split("`n")
 
-            $answersOutput = "@($newline"
-            foreach ($answer in $answers) {
-                $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
+            $answersOutput = ""
+    
+            if (-not [string]::IsNullOrWhiteSpace($answers)) {
+                $answers = $answers.Split("`n")
+
+                $answersOutput = "@($newline"
+                foreach ($answer in $answers) {
+                    $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
+                }
+                $answersOutput += "$indentation)$newline"
             }
-            $answersOutput += "$indentation)$newline"
 
             Write-Host -ForegroundColor Cyan "$($newline)There are two parts of a hint: trigger and the hint itself.$newline"`
             "The trigger can be a number, which will correspond to the number of times a user will have to enter the response incorrectly for the hint to appear.$newline"`
@@ -208,10 +284,14 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
                 $tutorialBlock += $newline
             }
 
-            $tutorialBlock += "$indentation`"answers`" = $answersOutput"
-            $tutorialBlock += $newline
+            if (-not [string]::IsNullOrWhiteSpace($answersOutput)) {
+                $tutorialBlock += "$indentation`"answers`" = $answersOutput"
+                $tutorialBlock += $newline
+            }
 
-            $tutorialBlock += "$indentation`"output`" = $outputsOutput"
+            if (-not [string]::IsNullOrWhiteSpace($outputsOutput)) {
+                $tutorialBlock += "$indentation`"output`" = $outputsOutput"
+            }
             $tutorialBlock += $newline
             $tutorialBlock += "`t}$newline"
 
@@ -226,20 +306,23 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
             }
         }
 
-        $fileOutput += ")"
+        $fileOutput += "`t)$newline}"
         $tutorialData = $fileOutput
 
     }
 
-    $locale = Join-Path $modulePath (Get-WinSystemLocale).Name
+    $global:tutorialData = $tutorialData
+    $global:modulePath = $modulePath
 
-    if (-not [System.IO.Directory]::Exists($locale)) {
-        mkdir $locale -ErrorAction Stop
+    $tutorialFolder = Join-Path $modulePath "Tutorial"
+
+    if (-not [System.IO.Directory]::Exists($tutorialFolder)) {
+        mkdir $tutorialFolder -ErrorAction Stop
     }
 
-    [System.IO.File]::WriteAllText("$locale\$Name.TutorialData.psd1", $tutorialData)
+    [System.IO.File]::WriteAllText("$tutorialFolder\$Name.TutorialData.psd1", $tutorialData)
 
-    ise "$locale\$Name.TutorialData.psd1"
+    ise "$tutorialFolder\$Name.TutorialData.psd1"
 
 }
 
@@ -277,6 +360,7 @@ function ThrowError
         $ErrorCategory
     )
         
+    CleanUpTutorial
     $exception = New-Object $ExceptionName $ExceptionMessage;
     $errorRecord = New-Object System.Management.Automation.ErrorRecord $exception, $ErrorId, $ErrorCategory, $ExceptionObject    
     $CallerPSCmdlet.ThrowTerminatingError($errorRecord)
@@ -305,7 +389,10 @@ function Add-Tutorial
         $Name,
         # if this is true then user will create the tutorial from the terminal
         [switch]
-        $Interactive
+        $Interactive,
+        # Allowed commands in the tutorial session
+        [string[]]
+        $TutorialCommands
     )
     Begin
     {
@@ -321,7 +408,7 @@ function Add-Tutorial
     }
     Process
     {
-        CreateTutorialInModule $modulePath $PSCmdlet
+        CreateTutorialInModule $modulePath $PSCmdlet $TutorialCommands
     }
     End
     {
@@ -346,11 +433,15 @@ function New-Tutorial
         # The name of the tutorial
         [Parameter(Mandatory=$true,
                    Position=0)]
+        [ValidateNotNullOrEmpty()]
         [string]
         $Name,
         # if this is true then user will create the tutorial from the terminal
         [switch]
-        $Interactive
+        $Interactive,
+        # List of commands that will be allowed to run
+        [string[]]
+        $TutorialCommands
     )
 
     Begin
@@ -377,13 +468,14 @@ function New-Tutorial
     }
     Process
     {
-        CreateTutorialInModule $directory.FullName $PSCmdlet
+        CreateTutorialInModule $directory.FullName $PSCmdlet $TutorialCommands
     }
     End
     {
     }
 }
 
+# Returns the Tutorial on this machine
 function Get-Tutorial
 {
     [CmdletBinding()]
@@ -396,33 +488,10 @@ function Get-Tutorial
 
     Process
     {
-        [string[]] $paths = $env:PSModulePath.Split(';')
-
-        foreach ($path in $paths) {
-            if (Test-Path $path) {
-                $modules = @()
-                $children = Get-ChildItem $path;
-                if ($children -ne $null -and $children.Length -gt 0) {
-                    foreach ($child in $children) {
-                        $manifest = Join-Path $child.FullName "$($child.Name).psd1"
-                        if (Test-Path $manifest) {
-                            $contents = Get-Content -Raw $manifest
-                            # contains the key word powershell tutorial. now we call test-modulemanifest
-                            if ($contents.IndexOf("PowerShellTutorial") -ge 0) {
-                                $moduleInfo = Test-ModuleManifest $manifest
-                                if ($moduleInfo.Tags -contains "PowerShellTutorial") {
-                                    $modules += $moduleInfo
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if ($modules.Count -gt 0) {
-                    $modules | Format-Table -Property ModuleType, Name -AutoSize
-                }
-            }
-        }
+        # Check whether there is a tutorial folder and a tutorialdata.psd1
+        Get-Module -ListAvailable `
+            | Where-Object {(-not [string]::IsNullOrWhiteSpace($_.Path)) -and (Test-Path (Join-Path (Join-Path (Split-Path $_.Path) "Tutorial") "$($_.Name).TutorialData.psd1"))} `
+            | Format-Table -Property ModuleType, Name
     }
 
     End
@@ -450,6 +519,7 @@ function Restore-Tutorial
         # Name of the tutorial
         [Parameter(Mandatory=$true,
                    Position=0)]
+        [ValidateNotNullOrEmpty()]
         [string]
         $Name
     )
@@ -502,6 +572,13 @@ function global:StartTutorialBlock {
     $Global:TutorialAttempts = 0
     $Global:TutorialIndex += 1
     $i = $Global:TutorialIndex
+
+    # no more block so clean up
+    if ($i -ge $Global:TutorialBlocks.Count) {
+        CleanUpTutorial
+        return
+    }
+
     $Global:TutorialPrompt = "[$i] PSTutorial> "
 
     $instruction = $Global:TutorialBlocks[$i]["instruction"]
@@ -511,9 +588,19 @@ function global:StartTutorialBlock {
 
     $Global:ResultFromAnswer = ""
 
+    
+
     if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
-        $Global:ResultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
-        $Error.Clear()
+        try {
+            $Global:ResultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
+        }
+        catch {
+            # If we can't invoke then return empty string
+            $Global:ResultFromAnswer = ""
+        }
+        finally {
+            $Error.Clear()
+        }
     }
     
     Write-Host -ForegroundColor Cyan "$instruction `n"
@@ -545,7 +632,6 @@ function global:TutorialMoveOn {
 
     # Verification time
     if ([string]::IsNullOrWhiteSpace($response)) {
-        $Global:TutorialAttempts += 1;
         return
     }
 
@@ -649,6 +735,7 @@ function Start-Tutorial
         # Name of the tutorial
         [Parameter(Mandatory=$true,
                    Position=0)]
+        [ValidateNotNullOrEmpty()]
         [string]
         $Name,
         [int]
@@ -1056,42 +1143,57 @@ function Start-Tutorial
             [void]$xml.Save($xmlPath)
         }
 
+        $Global:OldPrompt = Get-Content Function:\prompt
+
         try {
-            "Importing Module"
-            Import-Module $Name -Verbose
+            Import-Module $Name -Global
             $module = (Get-Module $Name)
-            $global:TutorialBlocks = Import-LocalizedData -BaseDirectory (Split-Path $module.Path) -FileName "$Name.TutorialData.psd1"
+            $tutorialDict = Import-LocalizedData -BaseDirectory (Join-Path (Split-Path $module.Path) "Tutorial") -FileName "$Name.TutorialData.psd1"
 
-            <#$RequiredCommands = @("Get-Command",
-                                         "Get-FormatData",
-                                         "Out-Default",
-                                         "Select-Object",
-                                         "Measure-Object",
-                                         "prompt",
-                                         "PSConsoleHostReadLine",
-                                         "Get-History",
-                                         "Get-Help",
-                                         "ForEach-Object",
-                                         "Where-Object",
-                                         "Out-String",
-                                         "Format-List",
-                                         "Format-Table",
-                                         "Format-Wide",
-                                         "Format-Custom",
-                                         "Get-Module"
-                                         )            
+            if ($null -eq $tutorialDict -or (-not $tutorialDict.ContainsKey("TutorialData"))) {
+                ThrowError -ExceptionName "System.ArgumentException" `
+                            -ExceptionMessage "Tutorial $Name does not have any tutorial data" `
+                            -ErrorId "NoTutorialData" `
+                            -CallerPSCmdlet $PSCmdlet `
+                            -ErrorCategory InvalidData `
+                            -ExceptionObject "$Name"
+            }
 
-            #$ExecutionContext.SessionState.Applications.Clear()
-            #$ExecutionContext.SessionState.Scripts.Clear()            
+            $global:TutorialBlocks = $tutorialDict["TutorialData"]
+
+            $RequiredCommands = @("Get-Command",
+                                "Get-FormatData",
+                                "Out-Default",
+                                "Select-Object",
+                                "Measure-Object",
+                                "prompt",
+                                "PSConsoleHostReadLine",
+                                "Get-History",
+                                "Get-Help",
+                                "ForEach-Object",
+                                "Where-Object",
+                                "Out-String",
+                                "Format-List",
+                                "Format-Table",
+                                "Format-Wide",
+                                "Format-Custom"
+                                )  
+
+            if ($tutorialDict.ContainsKey("TutorialCommands")) {
+                $RequiredCommands += $tutorialDict["TutorialCommands"]
+            }          
+
+            $Global:OldApplications = [System.Collections.ArrayList]::new($ExecutionContext.SessionState.Applications)
+            $Global:OldScripts = [System.Collections.ArrayList]::new($ExecutionContext.SessionState.Scripts)
+
+            $Global:AllCommandsBeforeTutorial = Get-Command -CommandType Cmdlet,Alias,Function
 
             # Don't display commands that are not from tutorialdemo and commands that are not from the module
-            $global:commands = Get-Command -CommandType Cmdlet, alias, function | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "TutorialDemo"}
-            $global:commands | ForEach-Object {$_.Visibility="Private"}
+            $Global:AllCommandsBeforeTutorial `
+                | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "TutorialDemo" -and $_.ModuleName -ne $module.Name} `
+                | ForEach-Object {$_.Visibility = "Private"}
 
-            $global:commands | Where-Object {$_.ModuleName -eq $module.Name} | ForEach-Object {$_.Visibility = "Public"}
-            #>
-
-            $Global:TutorialAttempts = -1
+            $global:TutorialAttempts = -1
         }
         catch
         {
@@ -1117,124 +1219,6 @@ function Start-Tutorial
             . $function:TutorialMoveOn
             return $Global:TutorialPrompt
         }
-
-        <#for ($i = $Block; $i -lt $blocks.Length; $i += 1) {
-            $prompt = "[$i] PSTutorial> "
-            $instruction = $blocks[$i]["instruction"]
-            [hashtable] $hints = $blocks[$i]["hints"]
-            [string[]] $acceptableResponses = $blocks[$i]["answers"]
-
-            $resultFromAnswer = ""
-
-            if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
-                $resultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
-                $Error.Clear()
-            }
-        
-            $response = ""
-            $attempts = 0
-            $almostCorrect = ""
-            $hint = ""
-
-            while ($true)
-            {
-                if ($hints -ne $null -and $hints.ContainsKey($attempts)) {
-                    $hint = $hints[$attempts]
-                }
-    
-                if (-not [string]::IsNullOrWhiteSpace($almostCorrect)) {
-                    Write-Host -ForegroundColor Green "Hints: $almostCorrect`n"
-                    $almostCorrect = ""
-                }
-                elseif (-not [string]::IsNullOrWhiteSpace($hint)) {
-                    Write-Host -ForegroundColor Green "Hints: $hint`n"
-                }
-    
-                Write-Host -ForegroundColor Cyan "$instruction `n"
-                Write-Host -ForegroundColor Yellow -NoNewline $prompt
-                [string]$response = Get-Response (Read-Host)
-
-                if ($response -contains "$") {
-                    $response = $response -replace "$", "`$"
-                }
-
-                Write-Host
-
-                if ([string]::IsNullOrWhiteSpace($response)) {
-                    $attempts += 1;
-                    continue;
-                }
-                
-                switch ($response.ToLower()) {
-                    "stop-tutorial" {
-                        $tutorialNode = Update-TutorialNode $Name $i
-                        return
-                    }
-                } 
-                
-                [string]$expectedOutput = $blocks[$i]["output"]    
-                
-                $result = Invoke-Expression $response | Out-String
-
-                # we match output result if no answers are supplied
-                if ($null -eq $acceptableResponses) {
-                    # if output is null, then nothing to do
-                    if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
-                        # don't report error here
-                        $Error.Clear()
-                        break
-                    }
-                    
-                    # output is not null, we match
-                    if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {
-                        Write-PSError
-                        Write-Answer $expectedOutput
-                        break
-                    }
-                }
-
-                #here the acceptable response is not null
-                if ($response -iin $acceptableResponses) {
-                    # acceptable response
-                    if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
-                        # Mocking so clear possible error
-                        $error.Clear()
-                        Write-Answer $expectedOutput
-                    }
-                    else {                        
-                        Write-PSError
-                        Write-Answer $result
-                    }
-
-                    break
-                }
-
-                # here, response is not in acceptableResponses
-                Write-PSError
-
-                # we try to match user response with the result from one of the acceptable response
-                if (-not [string]::IsNullOrWhiteSpace($result)) {
-                    if (($result -replace '\s+',' ').Trim() -ieq ($resultFromAnswer -replace '\s+',' ').Trim()) {
-                        Write-Answer $resultFromAnswer
-                        break
-                    }
-
-                    # write the result user got from terminal
-                    Write-Host $result
-                }
-
-                # incorrect answer
-                Write-Host -ForegroundColor Red "$response is not correct`n"            
-
-                if ($hints -ne $null -and $hints.ContainsKey($response)) {
-                    $almostCorrect = $hints[$response]
-                    continue
-                }
-
-                $attempts += 1
-            }
-        }
-        #>
     }
     End
     {
