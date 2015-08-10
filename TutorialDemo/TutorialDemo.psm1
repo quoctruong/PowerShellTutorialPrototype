@@ -59,9 +59,9 @@ function Write-Answer ([string]$output)
 {
     if ($output -ne $null) {
         Write-Host "$output`n"
-
-        Write-Host -ForegroundColor Green "Correct!`n"
     }
+
+    Write-Host -ForegroundColor Green "Correct!`n"
 
 }
 
@@ -497,6 +497,140 @@ function Update-TutorialNode ([string]$Name, [int]$block=-1)
     return $null
 }
 
+# Start a new tutorial block
+function global:StartTutorialBlock {
+    $Global:TutorialAttempts = 0
+    $Global:TutorialIndex += 1
+    $i = $Global:TutorialIndex
+    $Global:TutorialPrompt = "[$i] PSTutorial> "
+
+    $instruction = $Global:TutorialBlocks[$i]["instruction"]
+    [string[]] $acceptableResponses = $Global:TutorialBlocks[$i]["answers"]
+    $Global:TutorialHint = ""
+    $Global:TutorialAlmostCorrect = ""
+
+    $Global:ResultFromAnswer = ""
+
+    if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
+        $Global:ResultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
+        $Error.Clear()
+    }
+    
+    Write-Host -ForegroundColor Cyan "$instruction `n"
+
+    Write-Host
+}
+
+# Verify answer and checks whether we can move on to the next block
+function global:TutorialMoveOn {
+    if ($Global:TutorialAttempts -eq -1) {
+        StartTutorialBlock
+        return
+    }
+
+    $i = $Global:TutorialIndex
+
+    $instruction = $Global:TutorialBlocks[$i]["instruction"]
+    [hashtable] $hints = $Global:TutorialBlocks[$i]["hints"]
+    [string[]] $acceptableResponses = $Global:TutorialBlocks[$i]["answers"]
+
+    # Getting the last index History
+    $lastHistoryIndex = (Get-History | Select-Object -Last 1).Id
+
+    # if count catch up with id, user has input something
+    if ($lastHistoryIndex -eq $Global:HistoryId) {
+        [string]$response = (Get-History -Id $Global:HistoryId)
+        $Global:HistoryId += 1
+    }        
+
+    # Verification time
+    if ([string]::IsNullOrWhiteSpace($response)) {
+        $Global:TutorialAttempts += 1;
+        return
+    }
+
+    $result = $Global:LastOutput | Out-String     
+    [string]$expectedOutput = $Global:TutorialBlocks[$i]["output"]    
+                
+    #$result = Invoke-Expression $response | Out-String
+
+    # we match output result if no answers are supplied
+    if ($null -eq $acceptableResponses) {
+        # if output is null, then nothing to do
+        if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
+            # don't report error here
+            $Error.Clear()
+            StartTutorialBlock
+            return
+        }
+                    
+        # output is not null, we match
+        if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {            
+            Write-PSError
+            Write-Answer
+            StartTutorialBlock
+            return
+        }
+    }
+
+    #here the acceptable response is not null
+    if ($response -iin $acceptableResponses) {
+        # acceptable response
+        if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
+            # Mocking so clear possible error
+            $Error.Clear()
+            Write-Answer $expectedOutput
+        }
+        else {                        
+            Write-PSError
+            Write-Answer
+        }
+
+        StartTutorialBlock
+        return
+    }
+
+    # here, response is not in acceptableResponses
+    Write-PSError
+
+    # we try to match user response with the result from one of the acceptable response
+    if (-not [string]::IsNullOrWhiteSpace($result)) {
+        if (($result -replace '\s+',' ').Trim() -ieq ($Global:ResultFromAnswer -replace '\s+',' ').Trim()) {
+            Write-Answer
+            StartTutorialBlock
+            return
+        }
+    }
+
+    # incorrect answer
+    Write-Host -ForegroundColor Red "$response is not correct`n"            
+
+    if ($hints -ne $null -and $hints.ContainsKey($response)) {
+        $Global:TutorialAlmostCorrect = $hints[$response]
+    }
+    else
+    {
+        $Global:TutorialAttempts += 1
+    }
+
+    # after we finished veryfing answer, if there is no change, we print out the same prompt
+    if ($hints -ne $null -and $hints.ContainsKey($Global:TutorialAttempts)) {
+        $Global:TutorialHint = $hints[$Global:TutorialAttempts]
+    }
+    
+    if (-not [string]::IsNullOrWhiteSpace($Global:TutorialAlmostCorrect)) {
+        Write-Host -ForegroundColor Green "Hints: $Global:TutorialAlmostCorrect`n"
+        $Global:TutorialAlmostCorrect = ""
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($Global:TutorialHint)) {
+        Write-Host -ForegroundColor Green "Hints: $Global:TutorialHint`n"
+    }
+    
+    Write-Host -ForegroundColor Cyan "$instruction `n"
+
+    Write-Host
+}
+
 <#
 .Synopsis
    Start a tutorial session
@@ -523,6 +657,383 @@ function Start-Tutorial
 
     Begin
     {
+        # Wrapper for Out-Default that saves the last object written
+        # and handles missing commands if the command is a directory
+        # or an URL. 
+        #
+        function Global:Out-Default
+        {
+            [CmdletBinding(HelpUri='http://go.microsoft.com/fwlink/?LinkID=113362', RemotingCapability='None')]
+            param(
+                [switch]
+                ${Transcript},
+
+                [Parameter(ValueFromPipeline=$true)]
+                [psobject]
+                ${InputObject})
+
+            begin
+            {
+                $wrappedCmdlet = $ExecutionContext.InvokeCommand.GetCmdlet(
+                "Out-Default")
+                $scriptCmdlet = { & $wrappedCmdlet @PSBoundParameters }
+                $steppablePipeline = $scriptCmdlet.GetSteppablePipeline()
+                $steppablePipeline.Begin($pscmdlet)
+                $captured = @()
+            }
+            process {
+
+                $captured += $_
+                # Only output to error pipeline if we told the process to do so
+                if ($_ -isnot [System.Management.Automation.ErrorRecord] -or $Global:OutputErrorToPipeLine -eq $true)
+                {
+                    $steppablePipeline.Process($_)
+                    $Error.Add($_)
+                }
+            }
+            end {
+                if ($global:Formatted -eq $true) {
+                    $global:Formatted = $false
+                }
+                else {
+                    $global:LastOutput = $captured
+                }
+                $steppablePipeline.End()
+            }
+        }
+
+        function Global:Format-Custom
+        {
+        [CmdletBinding(HelpUri='http://go.microsoft.com/fwlink/?LinkID=113301')]
+        param(
+            [Parameter(Position=0)]
+            [System.Object[]]
+            ${Property},
+
+            [ValidateRange(1, 2147483647)]
+            [int]
+            ${Depth},
+
+            [System.Object]
+            ${GroupBy},
+
+            [string]
+            ${View},
+
+            [switch]
+            ${ShowError},
+
+            [switch]
+            ${DisplayError},
+
+            [switch]
+            ${Force},
+
+            [ValidateSet('CoreOnly','EnumOnly','Both')]
+            [string]
+            ${Expand},
+
+            [Parameter(ValueFromPipeline=$true)]
+            [psobject]
+            ${InputObject})
+
+        begin
+        {
+            try {
+                $outBuffer = $null
+                if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+                {
+                    $PSBoundParameters['OutBuffer'] = 1
+                }
+                $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Utility\Format-Custom', [System.Management.Automation.CommandTypes]::Cmdlet)
+                $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+                $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+                $steppablePipeline.Begin($PSCmdlet)
+                $captured = @()
+            } catch {
+                throw
+            }
+        }
+
+        process
+        {
+            try {
+                $captured += $_
+                $steppablePipeline.Process($_)
+            } catch {
+                throw
+            }
+        }
+
+        end
+        {
+            try {
+                $global:Formatted = $true
+                $PSBoundParameters["InputObject"] = $captured
+                $global:LastOutput = Microsoft.PowerShell.Utility\Format-Custom @PSBoundParameters
+                $steppablePipeline.End()
+            } catch {
+                throw
+            }
+        }
+        <#
+
+        .ForwardHelpTargetName Microsoft.PowerShell.Utility\Format-Custom
+        .ForwardHelpCategory Cmdlet
+
+        #>
+        }
+
+        function Global:Format-List
+        {
+        [CmdletBinding(HelpUri='http://go.microsoft.com/fwlink/?LinkID=113302')]
+        param(
+            [Parameter(Position=0)]
+            [System.Object[]]
+            ${Property},
+
+            [System.Object]
+            ${GroupBy},
+
+            [string]
+            ${View},
+
+            [switch]
+            ${ShowError},
+
+            [switch]
+            ${DisplayError},
+
+            [switch]
+            ${Force},
+
+            [ValidateSet('CoreOnly','EnumOnly','Both')]
+            [string]
+            ${Expand},
+
+            [Parameter(ValueFromPipeline=$true)]
+            [psobject]
+            ${InputObject})
+
+        begin
+        {
+            try {
+                $outBuffer = $null
+                if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+                {
+                    $PSBoundParameters['OutBuffer'] = 1
+                }
+                $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Utility\Format-List', [System.Management.Automation.CommandTypes]::Cmdlet)
+                $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+                $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+                $steppablePipeline.Begin($PSCmdlet)
+                $captured = @()
+            } catch {
+                throw
+            }
+        }
+
+        process
+        {
+            try {
+                $captured += $_
+                $steppablePipeline.Process($_)
+            } catch {
+                throw
+            }
+        }
+
+        end
+        {
+            try {
+                $global:Formatted = $true
+                $global:LastOutput = Microsoft.PowerShell.Utility\Format-List @PSBoundParameters
+                $steppablePipeline.End()
+            } catch {
+                throw
+            }
+        }
+        <#
+
+        .ForwardHelpTargetName Microsoft.PowerShell.Utility\Format-List
+        .ForwardHelpCategory Cmdlet
+
+        #>
+        }
+
+        function Global:Format-Table
+        {
+        [CmdletBinding(HelpUri='http://go.microsoft.com/fwlink/?LinkID=113303')]
+        param(
+            [switch]
+            ${AutoSize},
+
+            [switch]
+            ${HideTableHeaders},
+
+            [switch]
+            ${Wrap},
+
+            [Parameter(Position=0)]
+            [System.Object[]]
+            ${Property},
+
+            [System.Object]
+            ${GroupBy},
+
+            [string]
+            ${View},
+
+            [switch]
+            ${ShowError},
+
+            [switch]
+            ${DisplayError},
+
+            [switch]
+            ${Force},
+
+            [ValidateSet('CoreOnly','EnumOnly','Both')]
+            [string]
+            ${Expand},
+
+            [Parameter(ValueFromPipeline=$true)]
+            [psobject]
+            ${InputObject})
+
+        begin
+        {
+            try {
+                $outBuffer = $null
+                if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+                {
+                    $PSBoundParameters['OutBuffer'] = 1
+                }
+                $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Utility\Format-Table', [System.Management.Automation.CommandTypes]::Cmdlet)
+                $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+                $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+                $steppablePipeline.Begin($PSCmdlet)
+                $captured = @()
+            } catch {
+                throw
+            }
+        }
+
+        process
+        {
+            try {
+                $captured += $_
+                $steppablePipeline.Process($_)
+            } catch {
+                throw
+            }
+        }
+
+        end
+        {
+            try {
+                $global:Formatted = $true
+                $PSBoundParameters["InputObject"] = $captured
+                $global:LastOutput = Microsoft.PowerShell.Utility\Format-Table @PSBoundParameters
+                $steppablePipeline.End()
+            } catch {
+                throw
+            }
+        }
+        <#
+
+        .ForwardHelpTargetName Microsoft.PowerShell.Utility\Format-Table
+        .ForwardHelpCategory Cmdlet
+
+        #>
+        }
+
+        function Global:Format-Wide
+        {
+        [CmdletBinding(HelpUri='http://go.microsoft.com/fwlink/?LinkID=113304')]
+        param(
+            [Parameter(Position=0)]
+            [System.Object]
+            ${Property},
+
+            [switch]
+            ${AutoSize},
+
+            [ValidateRange(1, 2147483647)]
+            [int]
+            ${Column},
+
+            [System.Object]
+            ${GroupBy},
+
+            [string]
+            ${View},
+
+            [switch]
+            ${ShowError},
+
+            [switch]
+            ${DisplayError},
+
+            [switch]
+            ${Force},
+
+            [ValidateSet('CoreOnly','EnumOnly','Both')]
+            [string]
+            ${Expand},
+
+            [Parameter(ValueFromPipeline=$true)]
+            [psobject]
+            ${InputObject})
+
+        begin
+        {
+            try {
+                $outBuffer = $null
+                if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer))
+                {
+                    $PSBoundParameters['OutBuffer'] = 1
+                }
+                $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Utility\Format-Wide', [System.Management.Automation.CommandTypes]::Cmdlet)
+                $scriptCmd = {& $wrappedCmd @PSBoundParameters }
+                $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+                $steppablePipeline.Begin($PSCmdlet)
+                $captured = @()
+            } catch {
+                throw
+            }
+        }
+
+        process
+        {
+            try {
+                $captured += $_
+                $steppablePipeline.Process($_)
+            } catch {
+                throw
+            }
+        }
+
+        end
+        {
+            try {
+                $global:Formatted = $true
+                $PSBoundParameters["InputObject"] = $captured
+                $global:LastOutput = Microsoft.PowerShell.Utility\Format-Wide @PSBoundParameters
+                $steppablePipeline.End()
+            } catch {
+                throw
+            }
+        }
+        <#
+
+        .ForwardHelpTargetName Microsoft.PowerShell.Utility\Format-Wide
+        .ForwardHelpCategory Cmdlet
+
+        #>
+
+        }
+
         if (-not $script:resumeTutorial) {
             $xmlFolder = [System.IO.Path]::GetDirectoryName($script:xmlPath)
 
@@ -546,14 +1057,41 @@ function Start-Tutorial
         }
 
         try {
-            Import-Module $Name
+            "Importing Module"
+            Import-Module $Name -Verbose
             $module = (Get-Module $Name)
-            $blocks = Import-LocalizedData -BaseDirectory (Split-Path $module.Path) -FileName "$Name.TutorialData.psd1"
+            $global:TutorialBlocks = Import-LocalizedData -BaseDirectory (Split-Path $module.Path) -FileName "$Name.TutorialData.psd1"
 
-            [initialsessionstate]$iss = [initialsessionstate]::CreateRestricted([System.Management.Automation.SessionCapabilities]::RemoteServer)
-            $iss.LanguageMode = [System.Management.Automation.PSLanguageMode]::ConstrainedLanguage
-            $iss.ImportPSModule($Name)
-            [powershell]$ps = [powershell]::Create($iss)
+            <#$RequiredCommands = @("Get-Command",
+                                         "Get-FormatData",
+                                         "Out-Default",
+                                         "Select-Object",
+                                         "Measure-Object",
+                                         "prompt",
+                                         "PSConsoleHostReadLine",
+                                         "Get-History",
+                                         "Get-Help",
+                                         "ForEach-Object",
+                                         "Where-Object",
+                                         "Out-String",
+                                         "Format-List",
+                                         "Format-Table",
+                                         "Format-Wide",
+                                         "Format-Custom",
+                                         "Get-Module"
+                                         )            
+
+            #$ExecutionContext.SessionState.Applications.Clear()
+            #$ExecutionContext.SessionState.Scripts.Clear()            
+
+            # Don't display commands that are not from tutorialdemo and commands that are not from the module
+            $global:commands = Get-Command -CommandType Cmdlet, alias, function | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "TutorialDemo"}
+            $global:commands | ForEach-Object {$_.Visibility="Private"}
+
+            $global:commands | Where-Object {$_.ModuleName -eq $module.Name} | ForEach-Object {$_.Visibility = "Public"}
+            #>
+
+            $Global:TutorialAttempts = -1
         }
         catch
         {
@@ -566,11 +1104,21 @@ function Start-Tutorial
 
         Write-Host -ForegroundColor Cyan "Welcome to $Name tutorial`n"
         Write-Host -ForegroundColor Cyan "Type Stop-Tutorial anytime to quit the tutorial. Your progress will be saved`n"
-        if ($blocks -is [hashtable]) {
-            $blocks = ,$blocks
+        if ($global:TutorialBlocks -is [hashtable]) {
+            $global:TutorialBlocks = ,$global:TutorialBlocks
         }
 
-        for ($i = $Block; $i -lt $blocks.Length; $i += 1) {
+        $global:TutorialIndex = $Block-1
+
+        # Account for the start-tutorial
+        $Global:HistoryId = ((Get-History) | Select-Object -Last 1).Id + 2
+
+        function global:prompt {
+            . $function:TutorialMoveOn
+            return $Global:TutorialPrompt
+        }
+
+        <#for ($i = $Block; $i -lt $blocks.Length; $i += 1) {
             $prompt = "[$i] PSTutorial> "
             $instruction = $blocks[$i]["instruction"]
             [hashtable] $hints = $blocks[$i]["hints"]
@@ -579,10 +1127,8 @@ function Start-Tutorial
             $resultFromAnswer = ""
 
             if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
-                $ps.Commands.Clear()
-                [void]$ps.AddScript($acceptableResponses[0])
-                $resultFromAnswer = $ps.Invoke() | Out-String
-                $ps.Streams.Error.Clear()
+                $resultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
+                $Error.Clear()
             }
         
             $response = ""
@@ -608,6 +1154,10 @@ function Start-Tutorial
                 Write-Host -ForegroundColor Yellow -NoNewline $prompt
                 [string]$response = Get-Response (Read-Host)
 
+                if ($response -contains "$") {
+                    $response = $response -replace "$", "`$"
+                }
+
                 Write-Host
 
                 if ([string]::IsNullOrWhiteSpace($response)) {
@@ -624,22 +1174,20 @@ function Start-Tutorial
                 
                 [string]$expectedOutput = $blocks[$i]["output"]    
                 
-                $ps.Commands.Clear()
-                [void]$ps.AddScript($response)
-                $result = $ps.Invoke() | Out-String
+                $result = Invoke-Expression $response | Out-String
 
                 # we match output result if no answers are supplied
                 if ($null -eq $acceptableResponses) {
                     # if output is null, then nothing to do
                     if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
                         # don't report error here
-                        $ps.Streams.Error.Clear()
+                        $Error.Clear()
                         break
                     }
                     
                     # output is not null, we match
                     if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {
-                        Write-PSError $ps
+                        Write-PSError
                         Write-Answer $expectedOutput
                         break
                     }
@@ -650,11 +1198,11 @@ function Start-Tutorial
                     # acceptable response
                     if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
                         # Mocking so clear possible error
-                        $ps.Streams.Error.Clear()
+                        $error.Clear()
                         Write-Answer $expectedOutput
                     }
                     else {                        
-                        Write-PSError $ps
+                        Write-PSError
                         Write-Answer $result
                     }
 
@@ -662,7 +1210,7 @@ function Start-Tutorial
                 }
 
                 # here, response is not in acceptableResponses
-                Write-PSError $ps
+                Write-PSError
 
                 # we try to match user response with the result from one of the acceptable response
                 if (-not [string]::IsNullOrWhiteSpace($result)) {
@@ -686,6 +1234,7 @@ function Start-Tutorial
                 $attempts += 1
             }
         }
+        #>
     }
     End
     {
@@ -693,11 +1242,13 @@ function Start-Tutorial
 }
 
 function Write-PSError([powershell]$ps) {
-    if ($ps.HadErrors) {
-        foreach ($error in $ps.Streams.Error) {
-            Write-Error $error
+    if ($error.Count -gt 0) {
+        $Global:OutputErrorToPipeLine = $true
+        foreach ($err in $error) {
+            Write-Error $err
         }
         
-        $ps.Streams.Error.Clear()
+        $error.Clear()
+        $Global:OutputErrorToPipeLine = $false
     }
 }
