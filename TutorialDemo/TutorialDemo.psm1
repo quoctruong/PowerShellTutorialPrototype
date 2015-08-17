@@ -100,10 +100,29 @@ function Get-TutorialPromptOrAnswer([string[]]$prompt)
     return $instruction
 }
 
-function Stop-Tutorial {
-    $tutorialNode = Update-TutorialNode $Name $i
-    CleanUpTutorial
-    return
+<#
+.Synopsis
+   Stop a Tutorial session that you are in. The tutorial session can be restored
+   later with Restore-Tutorial
+.EXAMPLE
+   Stop-Tutorial
+#>
+function Stop-Tutorial
+{
+    [CmdletBinding()]
+    Param()
+    Begin
+    {
+    }
+    Process
+    {
+        $tutorialNode = Update-TutorialNode $Name $i
+        CleanUpTutorial
+        $Error.Clear()
+    }
+    End
+    {
+    }
 }
 
 function CleanUpTutorial {
@@ -116,8 +135,13 @@ function CleanUpTutorial {
     }
 
     # Return the sessionstate to original setting
-    $ExecutionContext.SessionState.Applications.AddRange($Global:OldApplications)
-    $ExecutionContext.SessionState.Scripts.AddRange($Global:OldScripts)
+    foreach ($application in $Global:OldApplications) {
+        $ExecutionContext.SessionState.Applications.Add($application)
+    }
+
+    foreach ($script in $Global:OldScripts) {
+        $ExecutionContext.SessionState.Scripts.Add($script)
+    }
 
     # Remove the proxy functions
     Remove-Item Function:\Out-Default -Force -ErrorAction SilentlyContinue
@@ -127,19 +151,15 @@ function CleanUpTutorial {
     Remove-Item Function:\Format-Custom -Force -ErrorAction SilentlyContinue
 
     # Remove variables
-    Remove-Variable $Global:OldPrompt -ErrorAction SilentlyContinue
-    Remove-Variable $Global:LastOutput -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialAttempts -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialAlmostCorrect -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialIndex -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialHint -ErrorAction SilentlyContinue
-    Remove-Variable $Global:ResultFromAnswer -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialBlocks -ErrorAction SilentlyContinue
-    Remove-Variable $Global:OutputErrorToPipeLine -ErrorAction SilentlyContinue
-    Remove-Variable $Global:Formatted -ErrorAction SilentlyContinue
-    Remove-Variable $Global:TutorialPrompt -ErrorAction SilentlyContinue
-    Remove-Variable $Global:OldApplications -ErrorAction SilentlyContinue
-    Remove-Variable $Global:OldScripts -ErrorAction SilentlyContinue
+    $VariablesToCleanUp = @("OldPrompt", "LastOutput", "TutorialAttempts", "TutorialAlmostCorrect", "TutorialIndex",
+                            "TutorialHint", "ResultFromAnswer", "TutorialBlocks", "OutputErrorToPipeLine", "Formatted",
+                            "TutorialPrompt", "OldApplications", "OldScripts")
+
+    foreach ($variable in $VariablesToCleanUp) {
+        if (Test-Path "Variable:\$variable") {
+            Remove-Variable -Name $variable -Scope Global -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 # Returns a string that represents the TutorialCommands key value section of the dictionary in tutorial data file
@@ -419,11 +439,37 @@ function Add-Tutorial
 .Synopsis
    Generate a tutorial
 .DESCRIPTION
-   Long description
+   To create a new tutorial, run New-Tutorial -Name <TutorialName>
+
+   After that, a data file that contains the Tutorial information will be opened in the ISE.
+
+   The data file contains a hashtable with 2 keys: TutorialCommands and TutorialData.
+
+   The value of TutorialCommands is an array of command names that are allowed in the tutorial. You can populate this array by providing a -Commands <List of commands> parameters to either New-Tutorial or Add-Tutorial cmdlet.
+
+   The value of TutorialData is an array of hashtables, each of which corresponds to a step in the tutorial. There are 4 possible keys in the hashtable:
+
+   Instruction: The instruction of this step
+
+   Answers: An array of acceptable responses
+
+   Hints: A hashtable. The key can be either number or string:
+
+   If the key is a number, then the corresponding value will be displayed if the user fails to provide the correct answer within that number of attempt.
+   If the key is a string, then the corresponding value will be displayed if the user enters that string.
+   Output: The output provided by the tutorial when the user enters the correct answer.
+
+   If a block has no answers and no output entry, then the user is always correct.
+
+   If a block has answers but not output entry, then the result of running the first answer will be compared to the result of the command that the user provides to determine whether the user is correct.
+
+   If a block has output but not answers entry, then the value of the output entry will be compared to the result of running the command that the user provides to determine whether the user is correct.
+
+   If a block has both answers and output entry, then we will check to see whether the command that the user provides fall into the list of answers to determine whether the user is correct. Any error resulted from running the user's command and the first answer will be suppressed (so basically this can be thought of as a form of mocking).
+
+   You can directly edit the data file to create as many steps as you want to.
 .EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   New-Tutorial -Name MyNewTutorial -TutorialCommands @("Get-MyObject")
 #>
 function New-Tutorial
 {
@@ -501,13 +547,9 @@ function Get-Tutorial
 
 <#
 .Synopsis
-   Short description
-.DESCRIPTION
-   Long description
+   Restore a Tutorial that was stopped before.
 .EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Restore-Tutorial -Name <TutorialName>
 #>
 function Restore-Tutorial
 {
@@ -568,7 +610,7 @@ function Update-TutorialNode ([string]$Name, [int]$block=-1)
 }
 
 # Start a new tutorial block
-function global:StartTutorialBlock {
+function StartTutorialBlock {
     $Global:TutorialAttempts = 0
     $Global:TutorialIndex += 1
     $i = $Global:TutorialIndex
@@ -576,6 +618,7 @@ function global:StartTutorialBlock {
     # no more block so clean up
     if ($i -ge $Global:TutorialBlocks.Count) {
         CleanUpTutorial
+        $Error.Clear()
         return
     }
 
@@ -609,7 +652,7 @@ function global:StartTutorialBlock {
 }
 
 # Verify answer and checks whether we can move on to the next block
-function global:TutorialMoveOn {
+function TutorialMoveOn {
     if ($Global:TutorialAttempts -eq -1) {
         StartTutorialBlock
         return
@@ -719,13 +762,10 @@ function global:TutorialMoveOn {
 
 <#
 .Synopsis
-   Start a tutorial session
-.DESCRIPTION
-   Long description
+   Start a Tutorial session. Supply the name of the Tutorial, which is the name
+   of a module that contains a Tutorial folder.
 .EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Start-Tutorial Get-CommandTutorial
 #>
 function Start-Tutorial
 {
@@ -1167,6 +1207,7 @@ function Start-Tutorial
                                 "Select-Object",
                                 "Measure-Object",
                                 "prompt",
+                                "TabExpansion2",
                                 "PSConsoleHostReadLine",
                                 "Get-History",
                                 "Get-Help",
@@ -1225,7 +1266,7 @@ function Start-Tutorial
     }
 }
 
-function Write-PSError([powershell]$ps) {
+function Write-PSError {
     if ($error.Count -gt 0) {
         $Global:OutputErrorToPipeLine = $true
         foreach ($err in $error) {
