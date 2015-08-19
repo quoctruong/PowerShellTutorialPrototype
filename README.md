@@ -14,6 +14,20 @@ Place the Get-CommandTutorial folder in C:\Program Files\WindowsPowerShell\Modul
 Now open PowerShell and simply run Start-Tutorial <TutorialName> to use the tutorial.
 In the case of Get-CommandTutorial, the command would be `Start-Tutorial Get-CommandTutorial`.
 
+The structure of a tutorial is `<ModuleWithTutorialName>/Tutorial/<TutorialName>.TutorialData.psd1` where the TutorialName
+should be the same as ModuleName.
+
+Using this structure, you can also start a tutorial by supplying the path to either:
+
+1. The <TutorialName>.TutorialData.psd1 file directly
+
+2. The path to the "Tutorial" folder
+
+3. The path to the Module folder
+
+If you don't want to use directory, you can simply supply the name of the module itself (as long as the module is placed
+in a module location specified by $PSModulePath)
+
 Anytime you want to stop the tutorial with the intent of resuming it later, simply run `Stop-Tutorial`.
 
 # Resume a Tutorial
@@ -27,11 +41,14 @@ To show the available tutorials, run `Get-Tutorial`
 
 # Create a new tutorial
 
-To create a new tutorial, run `New-Tutorial <TutorialName>`
+To create a new tutorial, run `New-Tutorial <TutorialName>`. This will create a folder with the structure
+`<TutorialName>\Tutorial\<TutorialName>.TutorialData.psd1` in the current directory. If you want to place this folder elsewhere, simply add `-Destination <Location>`. For example, if I want to place it in my module directory, I will run
+`New-Tutorial <TutorialName> -Destination "C:\Program Files\WindowsPowerShell\Modules"`
 
-To add a tutorial to an existing module, run `Add-Tutorial <ModuleName>`
+To add a tutorial to an existing module, run `Add-Tutorial <ModuleName>`. This will create a Tutorial folder with
+the structure `Tutorial\<ModuleName>.TutorialData.psd1` under the directory of the module.
 
-After that, a data file that contains the Tutorial information will be opened in the ISE.
+You can edit a tutorial by editing the `<TutorialName>.TutorialData.psd1` that is created.
 
 The data file contains a hashtable with 2 keys: TutorialCommands and TutorialData.
 
