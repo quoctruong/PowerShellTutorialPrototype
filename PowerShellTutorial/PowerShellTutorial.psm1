@@ -116,7 +116,7 @@ function Stop-Tutorial
     }
     Process
     {
-        $tutorialNode = Update-TutorialNode $Name $i
+        $tutorialNode = Update-TutorialNode $script:DataPath $Global:TutorialIndex
         CleanUpTutorial
         $Error.Clear()
     }
@@ -342,8 +342,6 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
 
     [System.IO.File]::WriteAllText("$tutorialFolder\$Name.TutorialData.psd1", $tutorialData)
 
-    ise "$tutorialFolder\$Name.TutorialData.psd1"
-
 }
 
 # Utility to throw an errorrecord
@@ -439,9 +437,9 @@ function Add-Tutorial
 .Synopsis
    Generate a tutorial
 .DESCRIPTION
-   To create a new tutorial, run New-Tutorial -Name <TutorialName>
+   To create a new tutorial, run New-Tutorial -Name <TutorialName> -Destination <Destination>
 
-   After that, a data file that contains the Tutorial information will be opened in the ISE.
+   If Destination is not supplied, the tutorial folder will be created in the current directory.
 
    The data file contains a hashtable with 2 keys: TutorialCommands and TutorialData.
 
@@ -470,6 +468,7 @@ function Add-Tutorial
    You can directly edit the data file to create as many steps as you want to.
 .EXAMPLE
    New-Tutorial -Name MyNewTutorial -TutorialCommands @("Get-MyObject")
+   New-Tutorial -Name MyNewTutorial -Destination "C:\Testing"
 #>
 function New-Tutorial
 {
@@ -487,25 +486,39 @@ function New-Tutorial
         $Interactive,
         # List of commands that will be allowed to run
         [string[]]
-        $TutorialCommands
+        [ValidateNotNullOrEmpty()]
+        $TutorialCommands,
+        # Destination to save the tutorial (if blanked, this will save to current folder)
+        [string]
+        [ValidateNotNullOrEmpty()]
+        $Destination
     )
 
     Begin
     {
-        $myDocuments = [System.Environment]::GetFolderPath("mydocuments");
-        $moduleFolder = "$myDocuments\WindowsPowerShell\Modules"
-        if ([System.IO.Directory]::Exists("$moduleFolder\$Name")) {
-            ThrowError -ExceptionName "System.ArgumentException" `
-                        -ExceptionMessage "Directory $Name already exists" `
-                        -ErrorId "DirectoryExists" `
-                        -CallerPSCmdlet $PSCmdlet `
-                        -ErrorCategory InvalidArgument `
-                        -ExceptionObject "$moduleFolder\$Name"
+        # If path is not supplied, use current directory
+        if ([string]::IsNullOrWhiteSpace($Destination)) {
+            $InstallationFolder = Resolve-Path '.\'
+        }
+        else {
+            # If path supplied is wrong, raise error
+            if (-not (Test-Path $Destination)) {
+                ThrowError -ExceptionName "System.ArgumentException" `
+                            -ExceptionMessage "Destination $Destination does not exists" `
+                            -ErrorId "DirectoryDoesNotExists" `
+                            -CallerPSCmdlet $PSCmdlet `
+                            -ErrorCategory InvalidArgument `
+                            -ExceptionObject "$Destination"
+            }
+
+            $InstallationFolder = Resolve-Path $Destination
         }
 
-        $directory = mkdir $moduleFolder\$Name
+        # Try to make the directory
+        $directory = mkdir "$($InstallationFolder.Path)\$Name" -ErrorAction Stop
         $moduleManifestCommand = Get-Command New-ModuleManifest
         if ($moduleManifestCommand.Parameters.ContainsKey("Tags")) {
+            # If tags is supported
             New-ModuleManifest "$($directory.FullName)\$Name.psd1" -Tags "PowerShellTutorial"
         }
         else {
@@ -572,16 +585,17 @@ function Restore-Tutorial
     Process
     {
         # no save data. just start as a new tutorial
-        if (-not (Test-Path $xmlPath)) {
+        if (-not (Test-Path $script:xmlPath)) {
             Start-Tutorial $Name
         }
         else {
-            $tutorialNode = Update-TutorialNode $Name
+            $tutorialDataPath = ResolveTutorialDataPath $Name
+            $tutorialNode = Update-TutorialNode $tutorialDataPath
 
             if ($tutorialNode -ne $null -and $tutorialNode.Block -ne $null)
             {
                 $script:resumeTutorial = $true
-                Start-Tutorial $Name -Block $tutorialNode.Block
+                Start-Tutorial $tutorialDataPath -Block $tutorialNode.Block
             }
         }
     }
@@ -760,10 +774,51 @@ function TutorialMoveOn {
     Write-Host
 }
 
+# Given a string which can be either name or path, returns path to .TutorialData.psd1 file
+function ResolveTutorialDataPath ([string]$TutorialNameOrPath) {
+    if (Test-Path $TutorialNameOrPath) {
+        $tutorialPath = Resolve-Path $TutorialNameOrPath
+        # if the path is a psd1 folder
+        if ($tutorialPath.Path.EndsWith(".TutorialData.psd1")) {
+            $tutorialDataPath = $tutorialPath.Path
+        }
+        else {
+            # if path is tutorial folder itself
+            if ([System.IO.Path]::GetFileName($tutorialPath.Path) -eq "Tutorial") {
+                $tutorialDirectory = $tutorialPath.Path
+            }
+            else {
+                # checks that it has subdirectory tutorial folder
+                [System.IO.DirectoryInfo]$tutorialDirectoryInfo = Get-ChildItem $tutorialPath.Path | Where-Object {$_ -is [System.IO.DirectoryInfo] -and $_.Name -eq "Tutorial"} | Select-Object -First 1
+                if ($tutorialDirectoryInfo -ne $null) {
+                    $tutorialDirectory = $tutorialDirectoryInfo.FullName
+                }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($tutorialDirectory)) {
+                [System.IO.FileInfo]$tutorialDataPathFileInfo = Get-ChildItem $tutorialDirectory | Where-Object {$_ -is [System.IO.FileInfo] -and $_.Name.EndsWith(".TutorialData.psd1")} | Select-Object -First 1
+                if ($tutorialDataPathFileInfo -ne $null) {
+                    $tutorialDataPath = $tutorialDataPathFileInfo.FullName
+                }
+            }
+        }
+                
+    }
+    else {
+        Import-Module $TutorialNameOrPath -Global
+        $module = (Get-Module $TutorialNameOrPath)
+        # get the path to the tutorialdata.psd1 file
+        $tutorialDataPath = Join-Path (Join-Path (Split-Path $module.Path) "Tutorial") "$Name.TutorialData.psd1"
+    }
+
+    return $tutorialDataPath
+}
+
 <#
 .Synopsis
    Start a Tutorial session. Supply the name of the Tutorial, which is the name
    of a module that contains a Tutorial folder.
+   You can also supply a path to a folder that contains a tutorial folder.
 .EXAMPLE
    Start-Tutorial Get-CommandTutorial
 #>
@@ -1161,34 +1216,20 @@ function Start-Tutorial
 
         }
 
-        if (-not $script:resumeTutorial) {
-            $xmlFolder = [System.IO.Path]::GetDirectoryName($script:xmlPath)
-
-            if (-not (Test-Path $xmlFolder)) {
-                $xmlDir = mkdir $xmlFolder
-            }
-
-            if (-not (Test-Path $script:xmlPath)) {
-                # if the xml 
-                $xml = [xml] $script:xmlTutorial
-            }
-            else {            
-                $xml = [xml] (Get-Content $xmlPath)
-            }
-
-            $tutorialNode = $xml.CreateElement("Tutorial")
-            [void]$tutorialNode.SetAttribute("Name", $Name)
-            [void]$tutorialNode.SetAttribute("Block", $Block)
-            [void]$xml.SelectSingleNode("//LocalTutorialData").AppendChild($tutorialNode)
-            [void]$xml.Save($xmlPath)
-        }
-
         $Global:OldPrompt = Get-Content Function:\prompt
 
         try {
-            Import-Module $Name -Global
-            $module = (Get-Module $Name)
-            $tutorialDict = Import-LocalizedData -BaseDirectory (Join-Path (Split-Path $module.Path) "Tutorial") -FileName "$Name.TutorialData.psd1"
+            # resolve the path
+            $script:DataPath = ResolveTutorialDataPath $Name
+
+            if (Test-Path $script:DataPath) 
+            {
+                $tutorialDataFileName = [System.IO.Path]::GetFileName($script:DataPath)
+                $tutorialDict = Import-LocalizedData -BaseDirectory (Split-Path $script:DataPath) -FileName $tutorialDataFileName
+
+                # Get the name of the tutorial
+                $Name = $tutorialDataFileName.Substring(0, $tutorialDataFileName.IndexOf(".TutorialData.psd1"))
+            }
 
             if ($null -eq $tutorialDict -or (-not $tutorialDict.ContainsKey("TutorialData"))) {
                 ThrowError -ExceptionName "System.ArgumentException" `
@@ -1197,6 +1238,33 @@ function Start-Tutorial
                             -CallerPSCmdlet $PSCmdlet `
                             -ErrorCategory InvalidData `
                             -ExceptionObject "$Name"
+            }
+
+
+            if (-not $script:resumeTutorial) {
+                $xmlFolder = [System.IO.Path]::GetDirectoryName($script:xmlPath)
+
+                if (-not (Test-Path $xmlFolder)) {
+                    $xmlDir = mkdir $xmlFolder
+                }
+
+                if (-not (Test-Path $script:xmlPath)) {
+                    # if the xml does not exist we have to create it
+                    $xml = [xml] $script:xmlTutorial
+                }
+                else {            
+                    $xml = [xml] (Get-Content $script:xmlPath)
+                    $tutorialBlock = Update-TutorialNode $script:DataPath $Block
+                }
+
+                # if null then it does not exist so we have to create it
+                if ($tutorialBlock -eq $null) {
+                    $tutorialNode = $xml.CreateElement("Tutorial")
+                    [void]$tutorialNode.SetAttribute("Name", $script:DataPath)
+                    [void]$tutorialNode.SetAttribute("Block", $Block)
+                    [void]$xml.SelectSingleNode("//LocalTutorialData").AppendChild($tutorialNode)
+                    [void]$xml.Save($script:xmlPath)
+                }
             }
 
             $global:TutorialBlocks = $tutorialDict["TutorialData"]
@@ -1231,13 +1299,14 @@ function Start-Tutorial
 
             # Don't display commands that are not from tutorialdemo and commands that are not from the module
             $Global:AllCommandsBeforeTutorial `
-                | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "TutorialDemo" -and $_.ModuleName -ne $module.Name} `
+                | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "PowerShellTutorial" -and $_.ModuleName -ne $module.Name} `
                 | ForEach-Object {$_.Visibility = "Private"}
 
             $global:TutorialAttempts = -1
         }
         catch
         {
+            CleanUpTutorial
             throw
         }
 
