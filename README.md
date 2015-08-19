@@ -41,8 +41,15 @@ To show the available tutorials, run `Get-Tutorial`
 
 # Create a new tutorial
 
-To create a new tutorial, run `New-Tutorial <TutorialName>`. This will create a folder with the structure
-`<TutorialName>\Tutorial\<TutorialName>.TutorialData.psd1` in the current directory. If you want to place this folder elsewhere, simply add `-Destination <Location>`. For example, if I want to place it in my module directory, I will run
+To create a new tutorial, run `New-Tutorial <TutorialName>`.
+
+This will create a folder with the structure `<TutorialName>\Tutorial\<TutorialName>.TutorialData.psd1`
+in the current directory.
+
+If you want to place this folder elsewhere, simply add `-Destination <Location>`.
+
+For example, if I want to place it in my module directory, I will run:
+
 `New-Tutorial <TutorialName> -Destination "C:\Program Files\WindowsPowerShell\Modules"`
 
 To add a tutorial to an existing module, run `Add-Tutorial <ModuleName>`. This will create a Tutorial folder with
