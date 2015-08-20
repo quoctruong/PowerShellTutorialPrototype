@@ -63,9 +63,12 @@ The value of TutorialCommands is an array of command names that are allowed in t
 by providing a `-Commands <List of commands>` parameters to either `New-Tutorial` or `Add-Tutorial` cmdlet.
 
 The value of TutorialData is an array of hashtables, each of which corresponds to a step in the tutorial.
-There are 4 possible keys in the hashtable:
+There are 5 possible keys in the hashtable:
 
 1. Instruction: The instruction of this step
+
+2. Verification: Contains the command that can be used to verify the answer. The command should return boolean value.
+If this field exists, then answers and output field should not exist.
 
 2. Answers: An array of acceptable responses
 
@@ -76,7 +79,10 @@ the correct answer within that number of attempt.
 
 4. Output: The output provided by the tutorial when the user enters the correct answer.
 
-If a block has no answers and no output entry, then the user is always correct.
+If a block has no verification, no answers and no output entry, then the user is always correct.
+
+If a block has verification entry, then that command will be run everytime the user output the answer to check
+whether the answer is correct. Otherwise, we will use answers and output entry to determine the answer.
 
 If a block has answers but not output entry, then the result of running the first answer will be compared to the
 result of the command that the user provides to determine whether the user is correct.
