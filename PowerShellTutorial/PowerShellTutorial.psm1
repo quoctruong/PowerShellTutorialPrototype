@@ -25,8 +25,8 @@ $script:simpleTutorialData = @"
             1 = "first hint"
             2 = "second hint"
         }}
-        # this will be mocked out if it is provided.
-        # otherwise, the output will be from running the first answers command
+        # this tutorial step will be mocked if both output and answers keys are present
+        # this means the answer is not run at all
         "output"="This is what will be printed for the user"
     }},
     @{{
@@ -38,6 +38,16 @@ $script:simpleTutorialData = @"
             "Get-AnotherAnswer" = "Almost correct. Check your noun"
         }}
         "output"="This is what I want the user to see"
+    }},
+    @{{
+        "instruction" = "second step in tutorial";
+        "hints" = @{{
+            "Get-AnotherAnswer" = "Almost correct. Check your noun"
+        }}
+        # if this key is supplied, then there should not be answers or output keys
+        # this command will be run after the user's input to verify that the user
+        # has the correct response
+        "verification"="`$true"
     }}
     )
 }}
@@ -153,7 +163,7 @@ function CleanUpTutorial {
     # Remove variables
     $VariablesToCleanUp = @("OldPrompt", "LastOutput", "TutorialAttempts", "TutorialAlmostCorrect", "TutorialIndex",
                             "TutorialHint", "ResultFromAnswer", "TutorialBlocks", "OutputErrorToPipeLine", "Formatted",
-                            "TutorialPrompt", "OldApplications", "OldScripts")
+                            "TutorialPrompt", "OldApplications", "OldScripts", "TutorialVerfication")
 
     foreach ($variable in $VariablesToCleanUp) {
         if (Test-Path "Variable:\$variable") {
@@ -197,7 +207,7 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
 
         while ($true) {              
             $indentation = "`t`t"
-            Write-Host -ForegroundColor Cyan "$($newline)Write your instruction here. Input a new line to move on to answers"
+            Write-Host -ForegroundColor Cyan "$($newline)Write your instruction here. Input a new line to move on to verification"
             $instruction = Get-TutorialPromptOrAnswer "Instruction> "        
 
             if ($instruction.IndexOf("`n") -gt 0) {
@@ -206,27 +216,57 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
                 $instruction = "`"$instruction`""
             }
 
-            Write-Host -ForegroundColor Cyan "$($newline)Write your acceptable answers here. Input a new line to move on to hints"
+            Write-Host -ForegroundColor Cyan "$($newline)Write the command to verify your response here. Input a new line to move on to hints if you provide a command,$($newline)else you will be moved on to answers"
 
-            $answers = Get-TutorialPromptOrAnswer "Answers> "
+            $verifications = Get-TutorialPromptOrAnswer "Verification> "
 
-            $answersOutput = ""
-    
-            if (-not [string]::IsNullOrWhiteSpace($answers)) {
-                $answers = $answers.Split("`n")
+            $verifications = $verifications.Split("`n")
+            $verificationOutputs = ""
 
-                $answersOutput = "@($newline"
-                foreach ($answer in $answers) {
-                    $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
+            foreach ($verification in $verifications) {
+                $verification = $verification.Trim()
+                if (-not [string]::IsNullOrWhiteSpace($verification)) {
+                    $verificationOutputs += $verification
                 }
-                $answersOutput += "$indentation)$newline"
+
+                # verification has length longer than 1, attach newline
+                if ($verifications.Length -gt 1) {
+                    $verificationOutputs += $newline
+                }
+            }
+
+            $hasVerification = -not [string]::IsNullOrWhiteSpace($verificationOutputs)
+
+            if ($verifications.IndexOf("`n") -gt 0) {
+                $verificationOutputs = "@`"$newline$($verificationOutputs.Trim())$newline`"@"
+            } else {
+                $verificationOutputs = "`"$verificationOutputs`""
+            }
+
+            # only move to hint if there is no verification
+            if (-not $hasVerification) {
+                Write-Host -ForegroundColor Cyan "$($newline)Write your acceptable answers here. Input a new line to move on to hints"
+
+                $answers = Get-TutorialPromptOrAnswer "Answers> "
+
+                $answersOutput = ""
+    
+                if (-not [string]::IsNullOrWhiteSpace($answers)) {
+                    $answers = $answers.Split("`n")
+
+                    $answersOutput = "@($newline"
+                    foreach ($answer in $answers) {
+                        $answersOutput += "$indentation`t`"$($answer.Trim())`"$newline"
+                    }
+                    $answersOutput += "$indentation)$newline"
+                }
             }
 
             Write-Host -ForegroundColor Cyan "$($newline)There are two parts of a hint: trigger and the hint itself.$newline"`
             "The trigger can be a number, which will correspond to the number of times a user will have to enter the response incorrectly for the hint to appear.$newline"`
             "The trigger can also be a string, which will correspond to the incorrect input that a user will have to enter for the hint to disappear.$newline"`
             "The hint itself correspond to the output.$newline"`
-            "Input a new line to move on to output"
+            "Input a new line to move on to output (if you did not supply verification)"
 
             $hints = Get-TutorialPromptOrAnswer "Trigger> ", "Hint> "
     
@@ -265,34 +305,36 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
                 $hintsOutput += "$indentation}$newline"
             }
 
-            Write-Host -ForegroundColor Cyan "$($newline)Write your output here, otherwise it will be the output of the first acceptable response$($newline). If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
+            if (-not $hasVerification) {
+                Write-Host -ForegroundColor Cyan "$($newline)Write your output here, otherwise it will be the output of the first acceptable response$($newline). If you want to pipe the output from a command, type Run-Command: <Your Command>. Input a new line to move on to the next tutorial block"
 
-            $outputs = Get-TutorialPromptOrAnswer "Output> "
+                $outputs = Get-TutorialPromptOrAnswer "Output> "
 
-            $outputs = $outputs.Split("`n")
-            $outputsOutput = ""
+                $outputs = $outputs.Split("`n")
+                $outputsOutput = ""
 
-            foreach ($output in $outputs) {
-                $output = $output.Trim()
-                if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
-                    $command = $output.Substring("Run-Command:".Length).Trim();
-                    try {
-                        $output = Invoke-Expression $command | Out-String
+                foreach ($output in $outputs) {
+                    $output = $output.Trim()
+                    if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
+                        $command = $output.Substring("Run-Command:".Length).Trim();
+                        try {
+                            $output = Invoke-Expression $command | Out-String
+                        }
+                        catch { }
                     }
-                    catch { }
+
+                    $outputsOutput += $output
+
+                    if ($outputs.Length -gt 1) {
+                        $outputsOutput += $newline
+                    }
                 }
 
-                $outputsOutput += $output
-
-                if ($outputs.Length -gt 1) {
-                    $outputsOutput += $newline
+                if ($outputsOutput.IndexOf("`n") -gt 0) {
+                    $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
+                } else {
+                    $outputsOutput = "`"$outputsOutput`""
                 }
-            }
-
-            if ($outputsOutput.IndexOf("`n") -gt 0) {
-                $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
-            } else {
-                $outputsOutput = "`"$outputsOutput`""
             }
 
             $tutorialBlock = "`t,@{$newline"
@@ -301,6 +343,11 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
 
             if (-not [string]::IsNullOrWhiteSpace($hintsOutput)) {
                 $tutorialBlock += "$indentation`"hints`" = $hintsOutput"
+                $tutorialBlock += $newline
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($verificationOutputs)) {
+                $tutorialBlock += "$indentation`"verification`" = $verificationOutputs"
                 $tutorialBlock += $newline
             }
 
@@ -636,18 +683,36 @@ function StartTutorialBlock {
         return
     }
 
+    $currentTutorialBlock = $Global:TutorialBlocks[$i]
+
+    # If a tutorial block has a verification key, then it should not contain
+    # either answer or output
+    if ($currentTutorialBlock.ContainsKey("verification") -and `
+        ($currentTutorialBlock.ContainsKey("answers") -or $currentTutorialBlock.ContainsKey("output"))) {
+                ThrowError -ExceptionName "System.ArgumentException" `
+                            -ExceptionMessage "Tutorial Block $i contains both verification and output or answers key." `
+                            -ErrorId "TutorialBlocksMalformed" `
+                            -CallerPSCmdlet $PSCmdlet `
+                            -ErrorCategory InvalidArgument `
+                            -ExceptionObject "$currentTutorialBlock"
+    }
+
     $Global:TutorialPrompt = "[$i] PSTutorial> "
 
-    $instruction = $Global:TutorialBlocks[$i]["instruction"]
-    [string[]] $acceptableResponses = $Global:TutorialBlocks[$i]["answers"]
+    $instruction = $currentTutorialBlock["instruction"]
+    [string[]] $acceptableResponses = $currentTutorialBlock["answers"]
     $Global:TutorialHint = ""
     $Global:TutorialAlmostCorrect = ""
+    $Global:TutorialVerification = $currentTutorialBlock["verification"]
 
     $Global:ResultFromAnswer = ""
 
-    
-
-    if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0) {
+    # we only run the first answer if acceptable response is not null and output is not null.
+    # otherwise we don't run the first answer because the author may be mocking  
+    # we also don't run the first answer if there is a verification
+    if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0 `
+        -and (-not [string]::IsNullOrWhiteSpace($currentTutorialBlock["output"])) `
+        -and (-not [string]::IsNullOrWhiteSpace($Global:TutorialVerification))) {
         try {
             $Global:ResultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
         }
@@ -692,56 +757,73 @@ function TutorialMoveOn {
         return
     }
 
-    $result = $Global:LastOutput | Out-String     
-    [string]$expectedOutput = $Global:TutorialBlocks[$i]["output"]    
+    # See whether we can use verify first
+    if (-not [string]::IsNullOrWhiteSpace($Global:TutorialVerification)) {
+        $verification = $false
+
+        try {
+            $verification = Invoke-Expression $Global:TutorialVerification | Select-Object -Last 1
+        }
+        catch {}
+
+        # answer is correct!
+        if ($verification -eq $true) {
+            Write-Answer
+            StartTutorialBlock
+            return
+        }
+    }
+    else {
+        # the author does not supply verify keyword
+        $result = $Global:LastOutput | Out-String     
+        [string]$expectedOutput = $Global:TutorialBlocks[$i]["output"]    
                 
-    #$result = Invoke-Expression $response | Out-String
-
-    # we match output result if no answers are supplied
-    if ($null -eq $acceptableResponses) {
-        # if output is null, then nothing to do
-        if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
-            # don't report error here
-            $Error.Clear()
-            StartTutorialBlock
-            return
-        }
+        # we match output result if no answers are supplied
+        if ($null -eq $acceptableResponses) {
+            # if output is null, then nothing to do
+            if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
+                # don't report error here
+                $Error.Clear()
+                StartTutorialBlock
+                return
+            }
                     
-        # output is not null, we match
-        if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {            
-            Write-PSError
-            Write-Answer
+            # output is not null, we match
+            if (($expectedOutput -replace '\s+',' ').Trim() -ieq ($result -replace '\s+',' ').Trim()) {            
+                Write-PSError
+                Write-Answer
+                StartTutorialBlock
+                return
+            }
+        }
+
+        #here the acceptable response is not null
+        if ($response -iin $acceptableResponses) {
+            # acceptable response
+            if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
+                # Mocking so clear possible error
+                $Error.Clear()
+                Write-Answer $expectedOutput
+            }
+            else {                        
+                Write-PSError
+                Write-Answer
+            }
+
             StartTutorialBlock
             return
         }
-    }
 
-    #here the acceptable response is not null
-    if ($response -iin $acceptableResponses) {
-        # acceptable response
-        if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
-            # Mocking so clear possible error
-            $Error.Clear()
-            Write-Answer $expectedOutput
-        }
-        else {                        
-            Write-PSError
-            Write-Answer
-        }
+        # here, response is not in acceptableResponses
+        Write-PSError
 
-        StartTutorialBlock
-        return
-    }
-
-    # here, response is not in acceptableResponses
-    Write-PSError
-
-    # we try to match user response with the result from one of the acceptable response
-    if (-not [string]::IsNullOrWhiteSpace($result)) {
-        if (($result -replace '\s+',' ').Trim() -ieq ($Global:ResultFromAnswer -replace '\s+',' ').Trim()) {
-            Write-Answer
-            StartTutorialBlock
-            return
+        # we try to match user response with the result from one of the acceptable response
+        if (-not [string]::IsNullOrWhiteSpace($result)) {
+            if (($result -replace '\s+',' ').Trim() -ieq ($Global:ResultFromAnswer -replace '\s+',' ').Trim()) {
+                Write-Answer
+                StartTutorialBlock
+                return
+            }
         }
     }
 
