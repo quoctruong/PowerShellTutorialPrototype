@@ -128,7 +128,6 @@ function Stop-Tutorial
     {
         $tutorialNode = Update-TutorialNode $script:DataPath $Global:TutorialIndex
         CleanUpTutorial
-        $Global:TutorialErrors.Clear()
     }
     End
     {
@@ -163,13 +162,15 @@ function CleanUpTutorial {
     # Remove variables
     $VariablesToCleanUp = @("OldPrompt", "LastOutput", "TutorialAttempts", "TutorialAlmostCorrect", "TutorialIndex",
                             "TutorialHint", "ResultFromAnswer", "TutorialBlocks", "OutputErrorToPipeLine", "Formatted",
-                            "TutorialPrompt", "OldApplications", "OldScripts", "TutorialVerfication")
+                            "TutorialPrompt", "OldApplications", "OldScripts", "TutorialVerification", "TutorialErrors")
 
     foreach ($variable in $VariablesToCleanUp) {
         if (Test-Path "Variable:\$variable") {
             Remove-Variable -Name $variable -Scope Global -ErrorAction SilentlyContinue
         }
     }
+
+    $Error.Clear()
 }
 
 # Returns a string that represents the TutorialCommands key value section of the dictionary in tutorial data file
@@ -698,7 +699,6 @@ function StartTutorialBlock {
     # no more block so clean up
     if ($i -ge $Global:TutorialBlocks.Count) {
         CleanUpTutorial
-        $Global:TutorialErrors.Clear()
         return
     }
 
