@@ -128,7 +128,7 @@ function Stop-Tutorial
     {
         $tutorialNode = Update-TutorialNode $script:DataPath $Global:TutorialIndex
         CleanUpTutorial
-        $Error.Clear()
+        $Global:TutorialErrors.Clear()
     }
     End
     {
@@ -220,28 +220,36 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
 
             $verifications = Get-TutorialPromptOrAnswer "Verification> "
 
-            $verifications = $verifications.Split("`n")
             $verificationOutputs = ""
 
-            foreach ($verification in $verifications) {
-                $verification = $verification.Trim()
-                if (-not [string]::IsNullOrWhiteSpace($verification)) {
-                    $verificationOutputs += $verification
+            if (-not [string]::IsNullOrWhiteSpace($verifications)) {
+                $verifications = $verifications.Split("`n")
+
+                foreach ($verification in $verifications) {
+                    $verification = $verification.Trim()
+                    if (-not [string]::IsNullOrWhiteSpace($verification)) {
+                        $verificationOutputs += $verification
+                    }
+
+                    # verification has length longer than 1, attach newline
+                    if ($verifications.Length -gt 1) {
+                        $verificationOutputs += $newline
+                    }
                 }
 
-                # verification has length longer than 1, attach newline
-                if ($verifications.Length -gt 1) {
-                    $verificationOutputs += $newline
+                if ($verifications.IndexOf("`n") -gt 0) {
+                    $verificationOutputs = "@`"$newline$($verificationOutputs.Trim())$newline`"@"
+                } else {
+                    $verificationOutputs = "`"$verificationOutputs`""
                 }
+
+                $verificationsOutputs -replace '$true', '`$true'
+                $verificationsOutputs -replace '$false', '`$false'
+                $verificationsOutputs -replace '$null', '`$null'
             }
 
             $hasVerification = -not [string]::IsNullOrWhiteSpace($verificationOutputs)
 
-            if ($verifications.IndexOf("`n") -gt 0) {
-                $verificationOutputs = "@`"$newline$($verificationOutputs.Trim())$newline`"@"
-            } else {
-                $verificationOutputs = "`"$verificationOutputs`""
-            }
 
             # only move to hint if there is no verification
             if (-not $hasVerification) {
@@ -310,30 +318,33 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
 
                 $outputs = Get-TutorialPromptOrAnswer "Output> "
 
-                $outputs = $outputs.Split("`n")
                 $outputsOutput = ""
+                
+                if (-not [string]::IsNullOrWhiteSpace($outputs)) {
+                    $outputs = $outputs.Split("`n")
 
-                foreach ($output in $outputs) {
-                    $output = $output.Trim()
-                    if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
-                        $command = $output.Substring("Run-Command:".Length).Trim();
-                        try {
-                            $output = Invoke-Expression $command | Out-String
+                    foreach ($output in $outputs) {
+                        $output = $output.Trim()
+                        if ($output.StartsWith("Run-Command:", "CurrentCultureIgnoreCase")) {
+                            $command = $output.Substring("Run-Command:".Length).Trim();
+                            try {
+                                $output = Invoke-Expression $command | Out-String
+                            }
+                            catch { }
                         }
-                        catch { }
+
+                        $outputsOutput += $output
+
+                        if ($outputs.Length -gt 1) {
+                            $outputsOutput += $newline
+                        }
                     }
 
-                    $outputsOutput += $output
-
-                    if ($outputs.Length -gt 1) {
-                        $outputsOutput += $newline
+                    if ($outputsOutput.IndexOf("`n") -gt 0) {
+                        $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
+                    } else {
+                        $outputsOutput = "`"$outputsOutput`""
                     }
-                }
-
-                if ($outputsOutput.IndexOf("`n") -gt 0) {
-                    $outputsOutput = "@`"$newline$($outputsOutput.Trim())$newline`"@"
-                } else {
-                    $outputsOutput = "`"$outputsOutput`""
                 }
             }
 
@@ -359,8 +370,14 @@ function CreateTutorialInModule([string]$modulePath, [System.Management.Automati
             if (-not [string]::IsNullOrWhiteSpace($outputsOutput)) {
                 $tutorialBlock += "$indentation`"output`" = $outputsOutput"
             }
+
             $tutorialBlock += $newline
             $tutorialBlock += "`t}$newline"
+
+            $hintsOutput = $null
+            $verificationOutputs = $null
+            $answersOutput = $null
+            $outputsOutput = $null
 
             $fileOutput += $tutorialBlock
             Write-Host -ForegroundColor Cyan "Tutorial block created."
@@ -672,6 +689,8 @@ function Update-TutorialNode ([string]$Name, [int]$block=-1)
 
 # Start a new tutorial block
 function StartTutorialBlock {
+    [CmdletBinding()]
+    Param()
     $Global:TutorialAttempts = 0
     $Global:TutorialIndex += 1
     $i = $Global:TutorialIndex
@@ -679,23 +698,11 @@ function StartTutorialBlock {
     # no more block so clean up
     if ($i -ge $Global:TutorialBlocks.Count) {
         CleanUpTutorial
-        $Error.Clear()
+        $Global:TutorialErrors.Clear()
         return
     }
 
     $currentTutorialBlock = $Global:TutorialBlocks[$i]
-
-    # If a tutorial block has a verification key, then it should not contain
-    # either answer or output
-    if ($currentTutorialBlock.ContainsKey("verification") -and `
-        ($currentTutorialBlock.ContainsKey("answers") -or $currentTutorialBlock.ContainsKey("output"))) {
-                ThrowError -ExceptionName "System.ArgumentException" `
-                            -ExceptionMessage "Tutorial Block $i contains both verification and output or answers key." `
-                            -ErrorId "TutorialBlocksMalformed" `
-                            -CallerPSCmdlet $PSCmdlet `
-                            -ErrorCategory InvalidArgument `
-                            -ExceptionObject "$currentTutorialBlock"
-    }
 
     $Global:TutorialPrompt = "[$i] PSTutorial> "
 
@@ -707,12 +714,12 @@ function StartTutorialBlock {
 
     $Global:ResultFromAnswer = ""
 
-    # we only run the first answer if acceptable response is not null and output is not null.
+    # we only run the first answer if acceptable response is not null and output is null.
     # otherwise we don't run the first answer because the author may be mocking  
     # we also don't run the first answer if there is a verification
     if ($acceptableResponses -ne $null -and $acceptableResponses.Count -gt 0 `
-        -and (-not [string]::IsNullOrWhiteSpace($currentTutorialBlock["output"])) `
-        -and (-not [string]::IsNullOrWhiteSpace($Global:TutorialVerification))) {
+        -and [string]::IsNullOrWhiteSpace($currentTutorialBlock["output"]) `
+        -and [string]::IsNullOrWhiteSpace($Global:TutorialVerification)) {
         try {
             $Global:ResultFromAnswer = Invoke-Expression $acceptableResponses[0] | Out-String
         }
@@ -721,7 +728,7 @@ function StartTutorialBlock {
             $Global:ResultFromAnswer = ""
         }
         finally {
-            $Error.Clear()
+            $Global:TutorialErrors.Clear()
         }
     }
     
@@ -772,6 +779,8 @@ function TutorialMoveOn {
             StartTutorialBlock
             return
         }
+
+        Write-PSError
     }
     else {
         # the author does not supply verify keyword
@@ -783,7 +792,7 @@ function TutorialMoveOn {
             # if output is null, then nothing to do
             if ([string]::IsNullOrWhiteSpace($expectedOutput)) {
                 # don't report error here
-                $Error.Clear()
+                $Global:TutorialErrors.Clear()
                 StartTutorialBlock
                 return
             }
@@ -802,7 +811,7 @@ function TutorialMoveOn {
             # acceptable response
             if (-not [string]::IsNullOrWhiteSpace($expectedOutput)) {
                 # Mocking so clear possible error
-                $Error.Clear()
+                $Global:TutorialErrors.Clear()
                 Write-Answer $expectedOutput
             }
             else {                        
@@ -858,6 +867,7 @@ function TutorialMoveOn {
 
 # Given a string which can be either name or path, returns path to .TutorialData.psd1 file
 function ResolveTutorialDataPath ([string]$TutorialNameOrPath) {
+    $script:module = $null
     if (Test-Path $TutorialNameOrPath) {
         $tutorialPath = Resolve-Path $TutorialNameOrPath
         # if the path is a psd1 folder
@@ -887,10 +897,10 @@ function ResolveTutorialDataPath ([string]$TutorialNameOrPath) {
                 
     }
     else {
-        Import-Module $TutorialNameOrPath -Global
-        $module = (Get-Module $TutorialNameOrPath)
+        Import-Module $TutorialNameOrPath -Global -ErrorAction Stop
+        $script:module = (Get-Module $TutorialNameOrPath)
         # get the path to the tutorialdata.psd1 file
-        $tutorialDataPath = Join-Path (Join-Path (Split-Path $module.Path) "Tutorial") "$Name.TutorialData.psd1"
+        $tutorialDataPath = Join-Path (Join-Path (Split-Path $script:module.Path) "Tutorial") "$Name.TutorialData.psd1"
     }
 
     return $tutorialDataPath
@@ -946,13 +956,13 @@ function Start-Tutorial
                 $captured = @()
             }
             process {
-
                 $captured += $_
-                # Only output to error pipeline if we told the process to do so
-                if ($_ -isnot [System.Management.Automation.ErrorRecord] -or $Global:OutputErrorToPipeLine -eq $true)
+                # if we get an error record then we may want to suppress it
+                if ($_ -isnot [System.Management.Automation.ErrorRecord])
                 {
                     $steppablePipeline.Process($_)
-                    $Error.Add($_)
+                } else {
+                    $global:TutorialErrors.Add($_)
                 }
             }
             end {
@@ -1298,13 +1308,15 @@ function Start-Tutorial
 
         }
 
+        $global:TutorialErrors = [System.Collections.ArrayList]::new()
+
         $Global:OldPrompt = Get-Content Function:\prompt
 
         try {
             # resolve the path
             $script:DataPath = ResolveTutorialDataPath $Name
 
-            if (Test-Path $script:DataPath) 
+            if (-not [string]::IsNullOrWhiteSpace($script:DataPath) -and (Test-Path $script:DataPath))
             {
                 $tutorialDataFileName = [System.IO.Path]::GetFileName($script:DataPath)
                 $tutorialDict = Import-LocalizedData -BaseDirectory (Split-Path $script:DataPath) -FileName $tutorialDataFileName
@@ -1381,7 +1393,7 @@ function Start-Tutorial
 
             # Don't display commands that are not from tutorialdemo and commands that are not from the module
             $Global:AllCommandsBeforeTutorial `
-                | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "PowerShellTutorial" -and $_.ModuleName -ne $module.Name} `
+                | Where-Object {$RequiredCommands -notcontains $_.Name -and $_.ModuleName -ne "PowerShellTutorial" -and $_.ModuleName -ne $script:module.Name} `
                 | ForEach-Object {$_.Visibility = "Private"}
 
             $global:TutorialAttempts = -1
@@ -1418,13 +1430,11 @@ function Start-Tutorial
 }
 
 function Write-PSError {
-    if ($error.Count -gt 0) {
-        $Global:OutputErrorToPipeLine = $true
-        foreach ($err in $error) {
-            Write-Error $err
+    if ($global:TutorialErrors.Count -gt 0) {
+        foreach ($err in $global:TutorialErrors) {
+            Write-Host -ForegroundColor Red ($err | Out-String)
         }
         
-        $error.Clear()
-        $Global:OutputErrorToPipeLine = $false
+        $global:TutorialErrors.Clear()
     }
 }
