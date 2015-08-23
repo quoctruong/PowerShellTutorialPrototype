@@ -8,8 +8,8 @@ Unzip the tutorial and place the TutorialDemo folder in C:\Program Files\Windows
 
 # Start a Tutorial
 
-A sample tutorial is included in the zip file (the name of the tutorial is Get-CommandTutorial).
-Place the Get-CommandTutorial folder in C:\Program Files\WindowsPowerShell\Modules.
+Two sample tutorials is included in the zip file (the name of the tutorials are Get-CommandTutorial and PackageManagementTutorial).
+Place the Get-CommandTutorial and PackageManagementTutorial folders in C:\Program Files\WindowsPowerShell\Modules.
 
 Now open PowerShell and simply run Start-Tutorial <TutorialName> to use the tutorial.
 In the case of Get-CommandTutorial, the command would be `Start-Tutorial Get-CommandTutorial`.
@@ -57,10 +57,13 @@ the structure `Tutorial\<ModuleName>.TutorialData.psd1` under the directory of t
 
 You can edit a tutorial by editing the `<TutorialName>.TutorialData.psd1` that is created.
 
-The data file contains a hashtable with 2 keys: TutorialCommands and TutorialData.
+The data file contains a hashtable with 3 keys: TutorialModules, TutorialCommands and TutorialData.
+
+The value of TutorialModules is an array of module names that are allowed in the tutorial. You can populate this array
+by providing a `-TutorialModules <List of modules>` parameters to either `New-Tutorial` or `Add-Tutorial` cmdlet.
 
 The value of TutorialCommands is an array of command names that are allowed in the tutorial. You can populate this array
-by providing a `-Commands <List of commands>` parameters to either `New-Tutorial` or `Add-Tutorial` cmdlet.
+by providing a `-TutorialCommands <List of commands>` parameters to either `New-Tutorial` or `Add-Tutorial` cmdlet.
 
 The value of TutorialData is an array of hashtables, each of which corresponds to a step in the tutorial.
 There are 5 possible keys in the hashtable:
