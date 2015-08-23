@@ -1,4 +1,13 @@
 @{
+    "TutorialModules" = @("PackageManagement")
+    "TutorialCommands" = @(
+        "Get-PackageProvider",
+        "Find-Package",
+        "Get-PackageSource",
+        "Register-PackageSource",
+        "Install-Package",
+        "Uninstall-Package"
+    )
 	"TutorialData" = @(
 	,@{
 		"instruction" = "Let's try to find the available packageprovider on this machine with Get-PackageProvider"
@@ -22,7 +31,8 @@
 		"instruction" = @"
 Before installing a package with nuget provider, we need to register a package source.
 Use Register-PackageSource to register http://www.nuget.org/api/v2/ for Nuget provider.
-You can give a name to this package source with -name option
+You can give a name to this package source with -name option.
+Ignore this step if you already register a package source for nuget with this location by entering anything in the terminal.
 "@
 		"hints" = @{
 			1 = "Run Register-PackageSource with Nuget as ProviderName and Location as http://www.nuget.org/api/v2/"

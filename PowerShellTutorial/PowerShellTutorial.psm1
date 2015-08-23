@@ -6,9 +6,13 @@ $script:xmlTutorial = @"
 
 $script:simpleTutorialData = @"
 @{{
+    "TutorialModules" = @(
+        # Provide modules that the user can use in the tutorial session here
+{0}
+    )
     "TutorialCommands" = @(
         # Provide commands that the user can use in the tutorial session here
-{0}
+{1}
     )
     "TutorialData" = @(
     @{{
@@ -173,8 +177,8 @@ function CleanUpTutorial {
     $Error.Clear()
 }
 
-# Returns a string that represents the TutorialCommands key value section of the dictionary in tutorial data file
-function CreateTutorialCommandSection([string[]]$tutorialCommands) {
+# Returns a string that represents the TutorialCommandsOrModule key value section of the dictionary in tutorial data file
+function CreateTutorialCommandOrModuleSection([string[]]$tutorialCommands) {
     $output = ""
     if ($null -ne $tutorialCommands -and $tutorialCommands.Count -gt 0) {
         foreach ($cmd in $tutorialCommands) {
@@ -188,18 +192,26 @@ function CreateTutorialCommandSection([string[]]$tutorialCommands) {
 # Create a tutorial in a module
 # ModulePath is the path to the module
 # TutorialCommands is an optional parameter which is list of allowed commands
-function CreateTutorialInModule([string]$modulePath, [System.Management.Automation.PSCmdlet]$callerPScmdlet, [string[]]$tutorialCommands) {
-    $tutorialData = $script:simpleTutorialData -f (CreateTutorialCommandSection $tutorialCommands)
+function CreateTutorialInModule([string]$modulePath, [System.Management.Automation.PSCmdlet]$callerPScmdlet, [string[]]$tutorialModules, [string[]]$tutorialCommands) {
+    $tutorialData = $script:simpleTutorialData -f (CreateTutorialCommandOrModuleSection $tutorialModules),(CreateTutorialCommandOrModuleSection $tutorialCommands)
 
     if ($Interactive) {
         $newline = [System.Environment]::NewLine
 
         $fileOutput = "@{$newline"
 
+        if ($null -ne $tutorialModules -and $tutorialModules.Count -gt 0) {
+            $fileOutput += "`t`"TutorialModules`" = @($newline"
+
+            $fileOutput += CreateTutorialCommandOrModuleSection $tutorialModules
+
+            $fileOutput += "`t)$newline"
+        }
+
         if ($null -ne $tutorialCommands -and $tutorialCommands.Count -gt 0) {
             $fileOutput += "`t`"TutorialCommands`" = @($newline"
 
-            $fileOutput += CreateTutorialCommandSection $tutorialCommands
+            $fileOutput += CreateTutorialCommandOrModuleSection $tutorialCommands
 
             $fileOutput += "`t)$newline"
         }
@@ -452,13 +464,9 @@ function ThrowError
 
 <#
 .Synopsis
-   Add a tutorial to an existing module
-.DESCRIPTION
-   Long description
+   Add a tutorial to an existing module. See New-Tutorial help for the structure of the TutorialData.psd1 file
 .EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Add-Tutorial PackageManagement
 #>
 function Add-Tutorial
 {
@@ -473,6 +481,9 @@ function Add-Tutorial
         # if this is true then user will create the tutorial from the terminal
         [switch]
         $Interactive,
+        # Allowed modules in the tutorial session
+        [string[]]
+        $TutorialModules,
         # Allowed commands in the tutorial session
         [string[]]
         $TutorialCommands
@@ -491,7 +502,7 @@ function Add-Tutorial
     }
     Process
     {
-        CreateTutorialInModule $modulePath $PSCmdlet $TutorialCommands
+        CreateTutorialInModule $modulePath $PSCmdlet $TutorialModules $TutorialCommands
     }
     End
     {
@@ -506,13 +517,17 @@ function Add-Tutorial
 
    If Destination is not supplied, the tutorial folder will be created in the current directory.
 
-   The data file contains a hashtable with 2 keys: TutorialCommands and TutorialData.
+   The data file contains a hashtable with 3 keys: TutorialModules, TutorialCommands and TutorialData.
+   
+   The value of TutorialModules is an array of module names that are allowed in the tutorial. You can populate this array by providing a -TutorialModules <List of commands> parameters to either New-Tutorial or Add-Tutorial cmdlet.
 
-   The value of TutorialCommands is an array of command names that are allowed in the tutorial. You can populate this array by providing a -Commands <List of commands> parameters to either New-Tutorial or Add-Tutorial cmdlet.
+   The value of TutorialCommands is an array of command names that are allowed in the tutorial. You can populate this array by providing a -TutorialCommands <List of commands> parameters to either New-Tutorial or Add-Tutorial cmdlet.
 
    The value of TutorialData is an array of hashtables, each of which corresponds to a step in the tutorial. There are 4 possible keys in the hashtable:
 
    Instruction: The instruction of this step
+
+   Verification: Contains the command that can be used to verify the answer. The command should return boolean value. If this field exists, then answers and output field should not exist.
 
    Answers: An array of acceptable responses
 
@@ -522,8 +537,10 @@ function Add-Tutorial
    If the key is a string, then the corresponding value will be displayed if the user enters that string.
    Output: The output provided by the tutorial when the user enters the correct answer.
 
-   If a block has no answers and no output entry, then the user is always correct.
+   If a block has no verification, no answers and no output entry, then the user is always correct.
 
+   If a block has verification entry, then that command will be run everytime the user output the answer to check whether the answer is correct. Otherwise, we will use answers and output entry to determine the answer.
+   
    If a block has answers but not output entry, then the result of running the first answer will be compared to the result of the command that the user provides to determine whether the user is correct.
 
    If a block has output but not answers entry, then the value of the output entry will be compared to the result of running the command that the user provides to determine whether the user is correct.
@@ -534,6 +551,7 @@ function Add-Tutorial
 .EXAMPLE
    New-Tutorial -Name MyNewTutorial -TutorialCommands @("Get-MyObject")
    New-Tutorial -Name MyNewTutorial -Destination "C:\Testing"
+   New-Tutorial -Name MyNewTutorial -TutorialModules @("PackageManagement") -TutorialCommands @("Get-PackageProvider")
 #>
 function New-Tutorial
 {
@@ -549,6 +567,10 @@ function New-Tutorial
         # if this is true then user will create the tutorial from the terminal
         [switch]
         $Interactive,
+        # List of modules that will be allowed to run
+        [string[]]
+        [ValidateNotNullOrEmpty()]
+        $TutorialModules,
         # List of commands that will be allowed to run
         [string[]]
         [ValidateNotNullOrEmpty()]
@@ -592,7 +614,7 @@ function New-Tutorial
     }
     Process
     {
-        CreateTutorialInModule $directory.FullName $PSCmdlet $TutorialCommands
+        CreateTutorialInModule $directory.FullName $PSCmdlet $TutorialModules $TutorialCommands
     }
     End
     {
@@ -1379,8 +1401,15 @@ function Start-Tutorial
                                 "Format-List",
                                 "Format-Table",
                                 "Format-Wide",
-                                "Format-Custom"
+                                "Format-Custom",
+                                "Get-Module"
                                 )  
+
+            if ($tutorialDict.ContainsKey("TutorialModules")) {
+                foreach ($allowedModule in $tutorialDict["TutorialModules"]) {
+                    Import-Module -Name $allowedModule -Global
+                }
+            }
 
             if ($tutorialDict.ContainsKey("TutorialCommands")) {
                 $RequiredCommands += $tutorialDict["TutorialCommands"]
